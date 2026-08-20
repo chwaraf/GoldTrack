@@ -1,0 +1,18 @@
+## Interface: 20505,20506
+## Title: GoldTrack
+## Notes: Session gold/hour tracker for TBC Anniversary
+## Author: GoldTrack
+## Version: 1.0.0
+## OptionalDeps: Auctionator, TradeSkillMaster
+## SavedVariables: GoldTrackDB
+## SavedVariablesPerCharacter: GoldTrackCharDB
+
+Core.lua
+Money.lua
+Prices.lua
+Valuation.lua
+Ledger.lua
+Events.lua
+UI_HUD.lua
+UI_Main.lua
+UI_Config.lua
