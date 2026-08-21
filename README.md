@@ -72,6 +72,17 @@ Session health line: colored **TSM / Auctionator / NIT** yes/no plus muted sellr
 | `/gt selftest` | Valuation fixtures + TSM probe (`itemID 21877` netherweave) |
 | `/gt debug` | Classifier trace in chat |
 
+## Keybinds
+
+Optional, under **Key Bindings → AddOns → GoldTrack** (no defaults set):
+
+| Binding | |
+| --- | --- |
+| Toggle Main Window | same as `/gt` |
+| Start / Pause Session | same as HUD Start/Pause |
+| Toggle HUD | same as `/gt hud` |
+| Reset Session (asks to confirm) | same as `/gt reset` |
+
 ---
 
 ## Valuation (loot-time, frozen)

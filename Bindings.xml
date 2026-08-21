@@ -1,0 +1,14 @@
+<Bindings>
+	<Binding name="GOLDTRACK_TOGGLE" header="GoldTrack">
+		if keystate == "down" then GoldTrackBindingToggleMain() end
+	</Binding>
+	<Binding name="GOLDTRACK_STARTSTOP" header="GoldTrack">
+		if keystate == "down" then GoldTrackBindingStartStop() end
+	</Binding>
+	<Binding name="GOLDTRACK_HUD" header="GoldTrack">
+		if keystate == "down" then GoldTrackBindingToggleHUD() end
+	</Binding>
+	<Binding name="GOLDTRACK_RESET" header="GoldTrack">
+		if keystate == "down" then GoldTrackBindingReset() end
+	</Binding>
+</Bindings>

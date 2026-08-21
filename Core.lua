@@ -376,6 +376,37 @@ SlashCmdList.GOLDTRACK = function(msg)
   end
 end
 
+-- Keybinds (Bindings.xml; listed under Key Bindings > AddOns > GoldTrack) --
+_G.BINDING_NAME_GOLDTRACK_TOGGLE = "Toggle Main Window"
+_G.BINDING_NAME_GOLDTRACK_STARTSTOP = "Start / Pause Session"
+_G.BINDING_NAME_GOLDTRACK_HUD = "Toggle HUD"
+_G.BINDING_NAME_GOLDTRACK_RESET = "Reset Session (asks to confirm)"
+
+function GoldTrackBindingToggleMain()
+  if GT.UI then GT.UI.ToggleMain() end
+end
+
+function GoldTrackBindingStartStop()
+  -- Same toggle the HUD Start/Pause button uses.
+  if GoldTrackCharDB.session.state == "RUNNING" then
+    GT.SessionStop()
+    GT.Print("session stopped")
+  else
+    GT.SessionStart()
+    GT.Print("session started")
+  end
+end
+
+function GoldTrackBindingToggleHUD()
+  GoldTrackDB.showHUD = not GoldTrackDB.showHUD
+  if GT.UI then GT.UI.ApplyHUDVisibility() end
+end
+
+function GoldTrackBindingReset()
+  -- Goes through the confirm popup; never resets silently.
+  StaticPopup_Show("GOLDTRACK_RESET")
+end
+
 StaticPopupDialogs["GOLDTRACK_RESET"] = {
   text = "Archive this session into Total and clear?",
   button1 = YES,
