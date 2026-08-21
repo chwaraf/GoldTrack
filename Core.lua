@@ -377,6 +377,9 @@ SlashCmdList.GOLDTRACK = function(msg)
 end
 
 -- Keybinds (Bindings.xml; listed under Key Bindings > AddOns > GoldTrack) --
+-- NOTE: no `header` attribute in Bindings.xml — on this client every header
+-- occurrence re-registers it and spams "attempted to be loaded more than
+-- once". Category alone is the proven pattern (Questie, Leatrix Plus).
 _G.BINDING_NAME_GOLDTRACK_TOGGLE = "Toggle Main Window"
 _G.BINDING_NAME_GOLDTRACK_STARTSTOP = "Start / Pause Session"
 _G.BINDING_NAME_GOLDTRACK_HUD = "Toggle HUD"
