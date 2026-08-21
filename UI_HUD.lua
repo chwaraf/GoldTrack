@@ -214,6 +214,31 @@ local function makeValue(parent, size, r, g, b)
   return fs
 end
 
+-- Tooltip plumbing ---------------------------------------------------------
+local function attachTip(f, content)
+  f:EnableMouse(true)
+  f:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:ClearLines()
+    if type(content) == "function" then
+      content(GameTooltip)
+    else
+      GameTooltip:AddLine(content, 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+  end)
+  f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  return f
+end
+
+-- Invisible catcher laid over label+value pairs (FontStrings take no mouse).
+local function hitOver(top, bottom, content)
+  local f = CreateFrame("Frame", nil, top:GetParent())
+  f:SetPoint("TOPLEFT", top, "TOPLEFT", -2, 2)
+  f:SetPoint("BOTTOMRIGHT", bottom, "BOTTOMRIGHT", 2, -2)
+  return attachTip(f, content)
+end
+
 function GT.UI.BuildHUD()
   if hud then return hud end
   local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
@@ -244,6 +269,7 @@ function GT.UI.BuildHUD()
   lootBtn:SetScript("OnClick", function()
     if GT.UI and GT.UI.ShowTab then GT.UI.ShowTab("loot") end
   end)
+  attachTip(lootBtn, "Open the loot list (current session rows).")
 
   local hideBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
   hideBtn:SetSize(16, 16)
@@ -253,6 +279,7 @@ function GT.UI.BuildHUD()
     GoldTrackDB.showHUD = false
     GT.UI.ApplyHUDVisibility()
   end)
+  attachTip(hideBtn, "Hide the HUD. Bring it back with /gt hud or the right-click menu.")
 
   local letA = hud:CreateFontString(nil, "OVERLAY")
   letA:SetFont(fontPath(), 10, "OUTLINE")
@@ -267,6 +294,21 @@ function GT.UI.BuildHUD()
   letN:SetPoint("LEFT", letA, "RIGHT", 4, 0)
   letN:SetText("N")
   hud.letT, hud.letA, hud.letN = letT, letA, letN
+
+  do
+    local srcHit = CreateFrame("Frame", nil, hud)
+    srcHit:SetPoint("TOPLEFT", letT, "TOPLEFT", -2, 2)
+    srcHit:SetPoint("BOTTOMRIGHT", letN, "BOTTOMRIGHT", 2, -2)
+    attachTip(srcHit, function(tt)
+      local tsm, atr, nit = GT.AddonsOn()
+      local function yn(on) return on and "|cff20ff20loaded|r" or "|cffff3030missing|r" end
+      tt:AddLine("Source addons", 1, 0.82, 0)
+      tt:AddDoubleLine("T  TradeSkillMaster", yn(tsm), 0.8, 0.8, 0.8, 1, 1, 1)
+      tt:AddDoubleLine("A  Auctionator", yn(atr), 0.8, 0.8, 0.8, 1, 1, 1)
+      tt:AddDoubleLine("N  NovaInstanceTracker", yn(nit), 0.8, 0.8, 0.8, 1, 1, 1)
+      tt:AddLine("Green = loaded, red = missing.", 0.55, 0.55, 0.55, true)
+    end)
+  end
 
   -- Top: TIME | (hourly count, no label) | GOLD
   local timeLab = makeLabel(hud, "TIME", 10)
@@ -291,6 +333,11 @@ function GT.UI.BuildHUD()
   goldVal:SetJustifyH("CENTER")
   hud.gold = goldVal
 
+  hitOver(timeLab, timeVal,
+    "Active session time. Pauses while AFK (if enabled) and while the session is stopped.")
+  hitOver(goldLab, goldVal,
+    "Session estimate: disposition value of loot at the moment it dropped. Vendoring, mailing or auctioning it later never counts twice.")
+
   local lockVal = makeValue(hud, 13, 1, 1, 1)
   lockVal:SetPoint("LEFT", timeVal, "RIGHT", 0, 0)
   lockVal:SetPoint("RIGHT", goldVal, "LEFT", 0, 0)
@@ -312,6 +359,17 @@ function GT.UI.BuildHUD()
   gph:SetWidth(150)
   hud.gph = gph
 
+  hitOver(gphLab, gph, function(tt)
+    tt:AddLine("Gold per hour", 1, 0.82, 0)
+    local minSec = (GoldTrackDB and GoldTrackDB.minGhSeconds) or 30
+    local ms = GT.NowMs()
+    if ms < minSec * 1000 then
+      tt:AddLine(format("Shows a countdown for the first %ds so early numbers cannot mislead.",
+        minSec), 0.8, 0.8, 0.8, true)
+    end
+    tt:AddLine("Session gold divided by active time. Raw ratio, no smoothing.", 0.55, 0.55, 0.55, true)
+  end)
+
   pauseBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
   pauseBtn:SetHeight(29)
   pauseBtn:SetPoint("BOTTOMLEFT", hud, "BOTTOMLEFT", 4, 5)
@@ -325,6 +383,20 @@ function GT.UI.BuildHUD()
       GT.SessionStart()
     end
   end)
+  attachTip(pauseBtn, function(tt)
+    if GT.afkPaused then
+      tt:AddLine("Resume", 1, 0.82, 0)
+      tt:AddLine("Continue the session clock after an AFK pause.", 0.8, 0.8, 0.8, true)
+    elseif GoldTrackCharDB.session.state == "RUNNING" then
+      tt:AddLine("Pause", 1, 0.82, 0)
+      tt:AddLine("Fold the session clock. Loot rows are kept; Reset archives and clears.",
+        0.8, 0.8, 0.8, true)
+    else
+      tt:AddLine("Start", 1, 0.82, 0)
+      tt:AddLine("Run the session clock and count world-loot value from now on.",
+        0.8, 0.8, 0.8, true)
+    end
+  end)
 
   resetBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
   resetBtn:SetSize(54, 18)
@@ -333,6 +405,7 @@ function GT.UI.BuildHUD()
   resetBtn:SetScript("OnClick", function()
     StaticPopup_Show("GOLDTRACK_RESET")
   end)
+  attachTip(resetBtn, "Archive this session into Total, then clear it. Asks to confirm.")
 
   -- Same 4px gap above Start as Reset uses.
   local gpmLab = makeLabel(hud, "G/m", 10)
@@ -342,6 +415,8 @@ function GT.UI.BuildHUD()
   gpm:SetPoint("BOTTOMLEFT", pauseBtn, "TOPLEFT", 6, 4)
   gpmLab:SetPoint("BOTTOMLEFT", gpm, "TOPLEFT", 0, 1)
   hud.gpm = gpm
+
+  hitOver(gpmLab, gpm, "Gold per minute for the active session.")
 
   -- click empty area (not the buttons) toggles main
   hud:SetScript("OnMouseDown", function(self, btn)

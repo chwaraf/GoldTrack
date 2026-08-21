@@ -13,6 +13,12 @@ local currentTab = "session"
 
 local TAB_IDS = { "total", "session", "loot", "config" }
 local TAB_LABEL = { total = "Total", session = "Session", loot = "Loot", config = "Config" }
+local TAB_TIP = {
+  total = "Lifetime totals across all archived sessions.",
+  session = "Current session summary, Start/Pause and Reset.",
+  loot = "Loot rows for this session. Click a row to edit its value.",
+  config = "Settings.",
+}
 
 local QCOL = {
   [0] = { 0.62, 0.62, 0.62 },
@@ -40,6 +46,20 @@ end
 
 local COL_MUTED = { 0.722, 0.722, 0.722 }
 local COL_GOLD = { 1, 0.820, 0 }
+
+local function tipW(f, content)
+  f:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:ClearLines()
+    if type(content) == "function" then
+      content(GameTooltip)
+    else
+      GameTooltip:AddLine(content, 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+  end)
+  f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
 
 local function applyPoint(frame, p, defx, defy)
   frame:ClearAllPoints()
@@ -160,6 +180,7 @@ function GT.UI.BuildMain()
     b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
     b:GetHighlightTexture():SetAlpha(0.4)
     b:SetScript("OnClick", function() GT.UI.ShowTab(id) end)
+    tipW(b, TAB_TIP[id] or TAB_LABEL[id])
     tabs[id] = b
 
     local p = CreateFrame("Frame", nil, main)
@@ -203,12 +224,18 @@ function GT.UI.BuildMain()
     wipe:SetPoint("BOTTOMLEFT", 4, 4)
     wipe:SetText("Clear lifetime")
     wipe:SetScript("OnClick", function() StaticPopup_Show("GOLDTRACK_WIPE") end)
+    tipW(wipe, function(tt)
+      tt:AddLine("Clear lifetime", 1, 0.82, 0)
+      tt:AddLine("Wipe lifetime totals and archives for this character.", 0.8, 0.8, 0.8, true)
+      tt:AddLine("You must type DELETE to confirm.", 0.55, 0.55, 0.55, true)
+    end)
 
     local histBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
     histBtn:SetSize(80, 22)
     histBtn:SetPoint("BOTTOMRIGHT", -4, 4)
     histBtn:SetText("History")
     histBtn:SetScript("OnClick", function() GT.UI.ToggleHistory() end)
+    tipW(histBtn, "Show the last archived sessions (compact list, hover a row for details).")
   end
 
   do
@@ -253,12 +280,23 @@ function GT.UI.BuildMain()
     start:SetScript("OnClick", function()
       if GoldTrackCharDB.session.state == "RUNNING" then GT.SessionStop() else GT.SessionStart() end
     end)
+    tipW(start, function(tt)
+      if GoldTrackCharDB.session.state == "RUNNING" then
+        tt:AddLine("Pause", 1, 0.82, 0)
+        tt:AddLine("Fold the session clock. Loot rows are kept.", 0.8, 0.8, 0.8, true)
+      else
+        tt:AddLine("Start", 1, 0.82, 0)
+        tt:AddLine("Run the session clock and count world-loot value from now on.",
+          0.8, 0.8, 0.8, true)
+      end
+    end)
     p.start = start
     local rst = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
     rst:SetSize(80, 24)
     rst:SetPoint("LEFT", start, "RIGHT", 8, 0)
     rst:SetText("Reset")
     rst:SetScript("OnClick", function() StaticPopup_Show("GOLDTRACK_RESET") end)
+    tipW(rst, "Archive this session into Total, then clear it. Asks to confirm.")
   end
 
   do
@@ -286,6 +324,10 @@ function GT.UI.BuildMain()
     eb:SetScript("OnEscapePressed", function(self)
       self:ClearFocus()
     end)
+    tipW(eb, function(tt)
+      tt:AddLine("Filter loot rows by name (applies as you type).", 1, 1, 1, true)
+      tt:AddLine("Esc releases keyboard focus.", 0.7, 0.7, 0.7, true)
+    end)
     local cb = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
     cb:SetPoint("LEFT", eb, "RIGHT", 8, 0)
     cb:SetSize(20, 20)
@@ -312,18 +354,21 @@ function GT.UI.BuildMain()
     hm:SetNormalFontObject(GameFontNormal)
     hm:SetText("Src")
     hm:SetScript("OnClick", function() lootSort = "method"; GT.UI.UpdateLoot() end)
+    tipW(hm, "Click to sort by value source (AH / DE / VEN / G).")
     local hv = CreateFrame("Button", nil, p)
     hv:SetSize(COL_VAL, 16)
     hv:SetPoint("RIGHT", hm, "LEFT", -4, 0)
     hv:SetNormalFontObject(GameFontNormal)
     hv:SetText("Gold")
     hv:SetScript("OnClick", function() lootSort = "value"; GT.UI.UpdateLoot() end)
+    tipW(hv, "Click to sort by estimated gold.")
     local hq = CreateFrame("Button", nil, p)
     hq:SetSize(COL_QTY, 16)
     hq:SetPoint("RIGHT", hv, "LEFT", -4, 0)
     hq:SetNormalFontObject(GameFontNormal)
     hq:SetText("Qty")
     hq:SetScript("OnClick", function() lootSort = "qty"; GT.UI.UpdateLoot() end)
+    tipW(hq, "Click to sort by quantity.")
     local hdr = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     hdr:SetPoint("TOPLEFT", 28, -30)
     hdr:SetPoint("RIGHT", hq, "LEFT", -8, 0)
@@ -571,6 +616,19 @@ function GT.UI.OpenLootEdit(row)
     sum:SetJustifyH("LEFT")
     sum:SetTextColor(1, 1, 1)
     f.sum = sum
+
+    -- tooltips for the edit popup
+    tipW(mb, function(tt)
+      tt:AddLine("Value source", 1, 0.82, 0)
+      tt:AddLine("Cycle: AH -> DE -> VENDOR -> NONE.", 0.8, 0.8, 0.8, true)
+      tt:AddLine("AH = auction-house net. DE = disenchant value.", 0.55, 0.55, 0.55, true)
+      tt:AddLine("Rows marked * use a manual override.", 0.55, 0.55, 0.55, true)
+    end)
+    tipW(ge, "Value per item in gold. Enter or clicking away applies it.")
+    tipW(bv, "Use the vendor sell price as unit value.")
+    tipW(bd, "Use the disenchant value as unit value.")
+    tipW(ba, "Use AH net (raw minus 5% cut minus expected lost deposit) as unit value.")
+    tipW(br, "Revert this row to the automatic valuation.")
 
     editFrame = f
   end

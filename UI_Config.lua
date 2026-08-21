@@ -141,7 +141,8 @@ function GT.UI.BuildConfig(p)
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "DE beats vendor by (g)",
     function() return GT.FmtNumber(GT.CopperToGold(GoldTrackDB.deMinVsVendor)) end,
-    function(t) GoldTrackDB.deMinVsVendor = GT.GoldToCopper(t) end)
+    function(t) GoldTrackDB.deMinVsVendor = GT.GoldToCopper(t) end,
+    "BoP gear and gear fallback path. Default 1g.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Mats: AH >= vendor x",
     function() return GT.FmtNumber(GoldTrackDB.commonAhMult) end,
@@ -214,7 +215,8 @@ function GT.UI.BuildConfig(p)
       { "expected_relist", "Relist until sold" },
     },
     function() return GoldTrackDB.ahValueMode end,
-    function(v) GoldTrackDB.ahValueMode = v end)
+    function(v) GoldTrackDB.ahValueMode = v end,
+    "If sold: raw minus cut and expected lost deposit (default). One-post EV also multiplies payout by sell rate. Relist spreads lost deposit across attempts until sold.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = cycle(child, y, "Deposit preset", {
       { "24h_30", "24h / 30%" },
@@ -224,7 +226,8 @@ function GT.UI.BuildConfig(p)
       { "custom", "Custom" },
     },
     function() return GoldTrackDB.ahDepositPreset end,
-    function(v) GoldTrackDB.ahDepositPreset = v end)
+    function(v) GoldTrackDB.ahDepositPreset = v end,
+    "Expected AH deposit = vendor sell price x percent (24h / 30% default). Ignore disables subtraction; Custom keeps the stored percent.")
   p.ctrls[#p.ctrls + 1] = c
 
   y = y - 6
@@ -252,11 +255,13 @@ function GT.UI.BuildConfig(p)
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Pause clock while AFK",
     function() return GoldTrackDB.pauseWhenAFK end,
-    function(v) GoldTrackDB.pauseWhenAFK = v end)
+    function(v) GoldTrackDB.pauseWhenAFK = v end,
+    "The clock folds while /afk and resumes when you return. The session is not stopped.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Resume after /reload",
     function() return GoldTrackDB.resumeAfterReload end,
-    function(v) GoldTrackDB.resumeAfterReload = v end)
+    function(v) GoldTrackDB.resumeAfterReload = v end,
+    "Keeps the session RUNNING if you /reload within 60s.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Resume after logout",
     function() return GoldTrackDB.resumeAfterLogout end,
@@ -265,11 +270,13 @@ function GT.UI.BuildConfig(p)
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Count quest rewards",
     function() return GoldTrackDB.countQuestRewards end,
-    function(v) GoldTrackDB.countQuestRewards = v end)
+    function(v) GoldTrackDB.countQuestRewards = v end,
+    "Also credit quest-reward loot pushed within a short quest window. Off by default so turn-ins never inflate g/h.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Show HUD",
     function() return GoldTrackDB.showHUD end,
-    function(v) GoldTrackDB.showHUD = v; GT.UI.ApplyHUDVisibility() end)
+    function(v) GoldTrackDB.showHUD = v; GT.UI.ApplyHUDVisibility() end,
+    "Same as /gt hud.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "HUD min level",
     function() return GoldTrackDB.hudMinLevelOn ~= false end,
@@ -286,7 +293,8 @@ function GT.UI.BuildConfig(p)
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Lock HUD",
     function() return GoldTrackDB.hudLocked end,
-    function(v) GoldTrackDB.hudLocked = v end)
+    function(v) GoldTrackDB.hudLocked = v end,
+    "Prevent dragging the HUD. Also toggles from the HUD right-click menu.")
   p.ctrls[#p.ctrls + 1] = c
 
   child:SetHeight(-y + 16)
