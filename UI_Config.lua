@@ -271,6 +271,19 @@ function GT.UI.BuildConfig(p)
     function() return GoldTrackDB.showHUD end,
     function(v) GoldTrackDB.showHUD = v; GT.UI.ApplyHUDVisibility() end)
   p.ctrls[#p.ctrls + 1] = c
+  c, y = check(child, y, "HUD min level",
+    function() return GoldTrackDB.hudMinLevelOn ~= false end,
+    function(v) GoldTrackDB.hudMinLevelOn = v; GT.UI.ApplyHUDVisibility() end,
+    "Hide HUD below this character level. Default on.")
+  p.ctrls[#p.ctrls + 1] = c
+  c, y = edit(child, y, "HUD min level value",
+    function() return GT.FmtNumber(GoldTrackDB.hudMinLevel or 70) end,
+    function(t)
+      GoldTrackDB.hudMinLevel = math.floor(GT.ParseNumber(t) or 70)
+      GT.UI.ApplyHUDVisibility()
+    end,
+    "Default 70. HUD stays hidden until you reach this level.")
+  p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Lock HUD",
     function() return GoldTrackDB.hudLocked end,
     function(v) GoldTrackDB.hudLocked = v end)

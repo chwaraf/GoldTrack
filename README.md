@@ -26,12 +26,17 @@ Vendoring, mailing, trading, AH payouts, and disenchanting already-looted gear d
 
 Default position: under the minimap (`MinimapCluster` / `Minimap`, 8px gap). Drag to move. Right-click for lock / reset / hide / config. Click empty HUD area to toggle the main window.
 
-Layout:
+Layout (158x164):
 
-- **TIME** | **GOLD** (session estimate, gold with 2 decimals)
+- Chrome: **Loot** (opens Loot tab) | **T A N** (TSM / Auctionator / NovaInstanceTracker; green loaded, red missing) | **x** (hides HUD; `/gt hud` to show)
+- **TIME** | unlabeled NIT count | **GOLD** (session estimate, gold with 2 decimals)
+- Unlabeled hourly count between TIME and GOLD (no LOCK word): `3/5` white if slots left; at 5/5 a **red** `m:ss` until the oldest hourly instance frees; `-` if NIT missing. Mouseover tooltip has details plus NIT per-instance expiry lines.
+- Count is **NovaInstanceTracker only**: `NIT:getInstanceLockoutInfo()` / `NIT.hourlyLimit`, same as the NIT minimap. NIT's own minimap text already walks the log **every 1s** (`NIT:ticker`). GoldTrack does not. We pull on dungeon enter/leave (`PLAYER_ENTERING_WORLD` + 0.5s + 2s so NIT can write `leftTime`) and once when a cached lock ages past 1 hour. Never faster than 1s. HUD 0.2s only paints the cache. Miss a count only if you delete/merge a NIT row without zoning (next zone or lock expiry fixes it).
 - **G/h** large number (gold/hour, 1 decimal)
-- **G/m** + **Reset**
+- **G/m** 4px above Start (left) + **Reset** 4px above Start (right)
 - Full-width **Start** / **Pause** / **Resume** (AFK)
+
+HUD `OnUpdate` always ticks (lockout countdown while stopped). Session clock is idle when not started.
 
 Until `minGhSeconds` (default **30**), the G/h slot shows remaining seconds (`30s` … `1s`) instead of a rate. G/m stays `-`. Raw ratio after that; no EMA.
 
@@ -45,7 +50,9 @@ Tabs: **Total**, **Session**, **Loot**, **Config**.
 
 Total / Session / Config rows are centered on a minus: `name - value`.
 
-Loot: name filter (Enter applies, Esc clears focus), Hide 0, columns Item / Qty / Gold / Src. Coin method shows `G`. Tooltip has vendor / DE / AH raw / cut / deposit / sell rate / AH net / why.
+Loot: name filter (Enter applies, Esc clears focus), Hide 0, columns Item / Qty / Gold / Src. Coin method shows `G`. Manual overrides show `*` on Src. Click a row to edit (docks beside main). Tooltip has vendor / DE / AH raw / cut / deposit / sell rate / AH net / why.
+
+Session health line: colored **TSM / Auctionator / NIT** yes/no plus muted sellrate.
 
 ---
 
@@ -176,10 +183,13 @@ If DE still leaked into the session: `/gt stripde` (current session only).
 ## Performance
 
 - No combat-log parsing
-- HUD `OnUpdate` is a no-op while stopped
-- Price cache: 256 entries, 30s TTL, wipe-on-full
+- HUD pulse **off** when stopped (unless 5/5 red countdown). While running, 1s ticks (time is whole seconds). `SetText` skipped if unchanged.
+- Loot / bag / spell / vendor events **unregistered** while the session is stopped
+- Bag OnUpdate only while a bag flush or OPEN-pending is live
+- NIT: zone + lock expiry only, never faster than NIT's 1s ticker
+- `C_Timer.After` instead of throwaway OnUpdate frames
+- Price cache: 256 entries, 30s TTL, wipe-on-full. TSM login refresh skipped if session empty
 - Dedup: 200-slot ring, 5s
-- Bag scans: openable itemIDs only, 50ms debounce
 - Loot list: 14 recycled rows (FauxScroll)
 - Session rows capped at 400 unique merge keys
 - Archives: last 30 compact sessions (no full loot replay)

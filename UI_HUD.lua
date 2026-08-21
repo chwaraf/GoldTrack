@@ -78,34 +78,91 @@ function GT.UI.SaveHUDPoint()
   GoldTrackDB.hudPoint = { a, rel and rel:GetName() or "UIParent", b, x, y }
 end
 
+local function setText(fs, t)
+  if not fs or fs._gt == t then return end
+  fs._gt = t
+  fs:SetText(t)
+end
+
+function GT.UI.HUDShouldPulse()
+  if not hud or not hud:IsShown() then return false end
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if s and s.state == "RUNNING" then return true end
+  local _, _, left = GT.HourlyLockout()
+  return left ~= nil
+end
+
+function GT.UI.SetHUDPulse()
+  if not hud then return end
+  local on = GT.UI.HUDShouldPulse()
+  if on then
+    if not hud._pulse then
+      hud._pulse = true
+      acc = 0
+      hud:SetScript("OnUpdate", function(self, elapsed)
+        acc = acc + elapsed
+        if acc < (GT.HUD_INTERVAL or 1) then return end
+        acc = 0
+        GT.UI.UpdateHUD()
+      end)
+    end
+  elseif hud._pulse then
+    hud._pulse = false
+    hud:SetScript("OnUpdate", nil)
+  end
+end
+
 function GT.UI.UpdateHUD()
   if not hud then return end
   local s = GoldTrackCharDB and GoldTrackCharDB.session
   if not s then return end
   local ms = GT.NowMs()
-  hud.time:SetText(fmtTime(ms))
-  hud.gold:SetText(commaNum(copperGold(s.copper or 0), 2))
+  setText(hud.time, fmtTime(ms))
+  setText(hud.gold, commaNum(copperGold(s.copper or 0), 2))
+
+  if hud.lock then
+    local used, maxn, left = GT.HourlyLockout()
+    hud._lockUsed, hud._lockMax, hud._lockLeft = used, maxn, left
+    if used == nil then
+      setText(hud.lock, "-")
+      hud.lock:SetTextColor(0.55, 0.55, 0.55)
+    elseif left then
+      local sec = floor(left)
+      setText(hud.lock, format("%d:%02d", floor(sec / 60), sec % 60))
+      hud.lock:SetTextColor(1, 0.2, 0.2)
+    else
+      setText(hud.lock, format("%d/%d", used, maxn or 5))
+      hud.lock:SetTextColor(1, 1, 1)
+    end
+  end
+  if hud.letT then
+    local tsm, atr, nit = GT.AddonsOn()
+    local function col(fs, on)
+      if on then fs:SetTextColor(0.12, 1, 0.12) else fs:SetTextColor(1, 0.22, 0.22) end
+    end
+    col(hud.letT, tsm)
+    col(hud.letA, atr)
+    col(hud.letN, nit)
+  end
 
   local ghCop = GT.GPerHour(s.copper or 0, ms)
   if ghCop == nil then
     local minSec = (GoldTrackDB and GoldTrackDB.minGhSeconds) or 30
     local left = math.ceil(minSec - (ms or 0) / 1000)
     if left < 0 then left = 0 end
-    hud.gph:SetText(tostring(left) .. "s")
-    hud.gpm:SetText("-")
+    setText(hud.gph, tostring(left) .. "s")
+    setText(hud.gpm, "-")
   else
-    hud.gph:SetText(commaNum(copperGold(ghCop), 1))
-    hud.gpm:SetText(commaNum(copperGold(ghCop) / 60, 1))
+    setText(hud.gph, commaNum(copperGold(ghCop), 1))
+    setText(hud.gpm, commaNum(copperGold(ghCop) / 60, 1))
   end
 
   local run = s.state == "RUNNING" and not GT.afkPaused
   if pauseBtn then
-    if GT.afkPaused then
-      pauseBtn:SetText("Resume")
-    elseif run then
-      pauseBtn:SetText("Pause")
-    else
-      pauseBtn:SetText("Start")
+    local lab = GT.afkPaused and "Resume" or (run and "Pause" or "Start")
+    if pauseBtn._gt ~= lab then
+      pauseBtn._gt = lab
+      pauseBtn:SetText(lab)
     end
   end
 
@@ -114,11 +171,27 @@ function GT.UI.UpdateHUD()
   else
     hud.time:SetTextColor(1, 1, 1)
   end
+  GT.UI.SetHUDPulse()
 end
 
 function GT.UI.ApplyHUDVisibility()
   if not hud then return end
-  if GoldTrackDB.showHUD then hud:Show() else hud:Hide() end
+  if not GoldTrackDB.showHUD then
+    hud:Hide()
+    GT.UI.SetHUDPulse()
+    return
+  end
+  if GoldTrackDB.hudMinLevelOn ~= false then
+    local need = GoldTrackDB.hudMinLevel or 70
+    local lvl = UnitLevel and UnitLevel("player") or 1
+    if lvl < need then
+      hud:Hide()
+      GT.UI.SetHUDPulse()
+      return
+    end
+  end
+  hud:Show()
+  GT.UI.SetHUDPulse()
 end
 
 local function makeLabel(parent, text, size)
@@ -145,7 +218,7 @@ function GT.UI.BuildHUD()
   if hud then return hud end
   local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
   hud = CreateFrame("Frame", "GoldTrackHUD", UIParent, tmpl)
-  hud:SetSize(158, 150)
+  hud:SetSize(158, 164)
   hud:SetFrameStrata("MEDIUM")
   hud:SetMovable(true)
   hud:EnableMouse(true)
@@ -164,41 +237,80 @@ function GT.UI.BuildHUD()
     GT.UI.SaveHUDPoint()
   end)
 
-  -- Top: TIME | GOLD, each half of the frame
+  local lootBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
+  lootBtn:SetSize(40, 16)
+  lootBtn:SetPoint("TOPLEFT", 3, -3)
+  lootBtn:SetText("Loot")
+  lootBtn:SetScript("OnClick", function()
+    if GT.UI and GT.UI.ShowTab then GT.UI.ShowTab("loot") end
+  end)
+
+  local hideBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
+  hideBtn:SetSize(16, 16)
+  hideBtn:SetPoint("TOPRIGHT", -3, -3)
+  hideBtn:SetText("x")
+  hideBtn:SetScript("OnClick", function()
+    GoldTrackDB.showHUD = false
+    GT.UI.ApplyHUDVisibility()
+  end)
+
+  local letA = hud:CreateFontString(nil, "OVERLAY")
+  letA:SetFont(fontPath(), 10, "OUTLINE")
+  letA:SetPoint("TOP", hud, "TOP", 0, -4)
+  letA:SetText("A")
+  local letT = hud:CreateFontString(nil, "OVERLAY")
+  letT:SetFont(fontPath(), 10, "OUTLINE")
+  letT:SetPoint("RIGHT", letA, "LEFT", -4, 0)
+  letT:SetText("T")
+  local letN = hud:CreateFontString(nil, "OVERLAY")
+  letN:SetFont(fontPath(), 10, "OUTLINE")
+  letN:SetPoint("LEFT", letA, "RIGHT", 4, 0)
+  letN:SetText("N")
+  hud.letT, hud.letA, hud.letN = letT, letA, letN
+
+  -- Top: TIME | (hourly count, no label) | GOLD
   local timeLab = makeLabel(hud, "TIME", 10)
-  timeLab:SetPoint("TOPLEFT", 4, -6)
-  timeLab:SetPoint("TOPRIGHT", hud, "TOP", -2, -6)
+  timeLab:SetPoint("TOPLEFT", 4, -22)
+  timeLab:SetWidth(48)
+  timeLab:SetJustifyH("CENTER")
 
   local timeVal = makeValue(hud, 13, 1, 1, 1)
   timeVal:SetPoint("TOPLEFT", timeLab, "BOTTOMLEFT", 0, -1)
-  timeVal:SetPoint("TOPRIGHT", timeLab, "BOTTOMRIGHT", 0, -1)
+  timeVal:SetWidth(48)
+  timeVal:SetJustifyH("CENTER")
   hud.time = timeVal
 
   local goldLab = makeLabel(hud, "GOLD", 10)
-  goldLab:SetPoint("TOPLEFT", hud, "TOP", 2, -6)
-  goldLab:SetPoint("TOPRIGHT", -4, -6)
+  goldLab:SetPoint("TOPRIGHT", -4, -22)
+  goldLab:SetWidth(48)
+  goldLab:SetJustifyH("CENTER")
 
   local goldVal = makeValue(hud, 13, 1, 1, 1)
-  goldVal:SetPoint("TOPLEFT", goldLab, "BOTTOMLEFT", 0, -1)
   goldVal:SetPoint("TOPRIGHT", goldLab, "BOTTOMRIGHT", 0, -1)
+  goldVal:SetWidth(52)
+  goldVal:SetJustifyH("CENTER")
   hud.gold = goldVal
 
+  local lockVal = makeValue(hud, 13, 1, 1, 1)
+  lockVal:SetPoint("LEFT", timeVal, "RIGHT", 0, 0)
+  lockVal:SetPoint("RIGHT", goldVal, "LEFT", 0, 0)
+  hud.lock = lockVal
+
+  local lockHit = CreateFrame("Frame", nil, hud)
+  lockHit:SetPoint("TOPLEFT", timeVal, "TOPRIGHT", -2, 6)
+  lockHit:SetPoint("BOTTOMRIGHT", goldVal, "BOTTOMLEFT", 2, -6)
+  lockHit:EnableMouse(true)
+  lockHit:SetScript("OnEnter", function(self) GT.UI.LockTooltip(self) end)
+  lockHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  hud.lockHit = lockHit
+
   local gphLab = makeLabel(hud, "G/h", 10)
-  gphLab:SetPoint("TOP", hud, "TOP", 0, -44)
+  gphLab:SetPoint("TOP", hud, "TOP", 0, -58)
 
   local gph = makeValue(hud, 28, 1, 0.820, 0)
   gph:SetPoint("TOP", gphLab, "BOTTOM", 0, 0)
   gph:SetWidth(150)
   hud.gph = gph
-
-  local gpmLab = makeLabel(hud, "G/m", 10)
-  gpmLab:SetPoint("TOPLEFT", 10, -86)
-  gpmLab:SetJustifyH("LEFT")
-
-  local gpm = makeValue(hud, 14, 1, 0.820, 0)
-  gpm:SetPoint("TOPLEFT", gpmLab, "BOTTOMLEFT", 0, -1)
-  gpm:SetJustifyH("LEFT")
-  hud.gpm = gpm
 
   pauseBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
   pauseBtn:SetHeight(29)
@@ -222,6 +334,15 @@ function GT.UI.BuildHUD()
     StaticPopup_Show("GOLDTRACK_RESET")
   end)
 
+  -- Same 4px gap above Start as Reset uses.
+  local gpmLab = makeLabel(hud, "G/m", 10)
+  gpmLab:SetJustifyH("LEFT")
+  local gpm = makeValue(hud, 14, 1, 0.820, 0)
+  gpm:SetJustifyH("LEFT")
+  gpm:SetPoint("BOTTOMLEFT", pauseBtn, "TOPLEFT", 6, 4)
+  gpmLab:SetPoint("BOTTOMLEFT", gpm, "TOPLEFT", 0, 1)
+  hud.gpm = gpm
+
   -- click empty area (not the buttons) toggles main
   hud:SetScript("OnMouseDown", function(self, btn)
     if btn == "LeftButton" and not GoldTrackDB.hudLocked then
@@ -241,22 +362,49 @@ function GT.UI.BuildHUD()
     end
   end)
 
-  hud:SetScript("OnUpdate", function(self, elapsed)
-    local s = GoldTrackCharDB and GoldTrackCharDB.session
-    if not s or s.state ~= "RUNNING" then
-      acc = 0
-      return
-    end
-    acc = acc + elapsed
-    if acc < GT.HUD_INTERVAL then return end
-    acc = 0
-    GT.UI.UpdateHUD()
-  end)
-
   GT.UI.hud = hud
   GT.UI.ApplyHUDVisibility()
   GT.UI.UpdateHUD()
   return hud
+end
+
+function GT.UI.LockTooltip(owner)
+  if not owner or not GameTooltip then return end
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  GameTooltip:ClearLines()
+  GameTooltip:AddLine("Hourly instances", 1, 0.82, 0)
+  local used = hud and hud._lockUsed
+  local maxn = (hud and hud._lockMax) or 5
+  local left = hud and hud._lockLeft
+  if used == nil then
+    GameTooltip:AddLine("NovaInstanceTracker is not loaded.", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine("HUD count matches the NIT minimap button.", 0.55, 0.55, 0.55, true)
+    GameTooltip:Show()
+    return
+  end
+  GameTooltip:AddLine(format("%d of %d in the last hour", used, maxn), 1, 1, 1)
+  if left then
+    local sec = floor(left)
+    GameTooltip:AddLine(format("Oldest frees in %d:%02d", floor(sec / 60), sec % 60), 1, 0.2, 0.2)
+  else
+    local rest = maxn - used
+    if rest < 0 then rest = 0 end
+    GameTooltip:AddLine(format("%d slot%s remaining", rest, rest == 1 and "" or "s"), 0.12, 1, 0.12)
+  end
+  local NIT = _G.NIT
+  if NIT and type(NIT.getMinimapButtonNextExpires) == "function" then
+    local ok, extra = pcall(NIT.getMinimapButtonNextExpires, NIT)
+    if ok and type(extra) == "string" then
+      for line in extra:gmatch("[^\n]+") do
+        local plain = line:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        if plain ~= "" then
+          GameTooltip:AddLine(plain, 0.72, 0.72, 0.72)
+        end
+      end
+    end
+  end
+  GameTooltip:AddLine("From NovaInstanceTracker (same as NIT minimap). NIT counts when you leave.", 0.55, 0.55, 0.55, true)
+  GameTooltip:Show()
 end
 
 function GT.UI.HUDMenu()
@@ -266,9 +414,20 @@ function GT.UI.HUDMenu()
     m:SetFrameStrata("TOOLTIP")
     m:SetSize(140, 88)
     GT.UI.Backdrop(m)
+    m:EnableMouse(true)
     m:Hide()
-    m:SetScript("OnLeave", function(self)
-      if not self:IsMouseOver() then self:Hide() end
+    m._life = 0
+    m:SetScript("OnUpdate", function(self, elapsed)
+      if not self:IsShown() then return end
+      if MouseIsOver(self) then
+        self._life = 0
+        return
+      end
+      self._life = (self._life or 0) + elapsed
+      if self._life >= 3 then
+        self:Hide()
+        self._life = 0
+      end
     end)
     local labels = { "Lock HUD", "Reset session", "Hide HUD", "Config" }
     for i = 1, 4 do
@@ -301,9 +460,19 @@ function GT.UI.HUDMenu()
   m[3].text:SetText(GoldTrackDB.showHUD and "Hide HUD" or "Show HUD")
   local x, y = GetCursorPosition()
   local sc = UIParent:GetEffectiveScale()
+  local px, py = x / sc, y / sc
+  local mw, mh = m:GetWidth(), m:GetHeight()
+  local uiw, uih = UIParent:GetWidth(), UIParent:GetHeight()
+  -- TOPLEFT of menu at cursor; keep fully on screen
+  if px + mw > uiw then px = uiw - mw end
+  if py > uih then py = uih end
+  if px < 0 then px = 0 end
+  if py - mh < 0 then py = mh end
   m:ClearAllPoints()
-  m:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / sc, y / sc)
+  m:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", px, py)
+  m:SetClampedToScreen(true)
   m:Show()
+  m._life = 0
 end
 
 function GT.UI.SetHUDScale(sc)

@@ -75,7 +75,6 @@ local moneyPat = {}
 local transfer = 0
 local transferUntil = 0
 local lootFrameUntil = 0
-local destroyUntil = 0
 local gatherUntil = 0
 local questUntil = 0
 
@@ -85,8 +84,9 @@ local pendingN = 0
 local pendingInfo = {} -- [mergeKey] = {count, source, link, itemID}
 local pendingInfoN = 0
 
--- openable qty by itemID (bags 0-4 + keyring only)
+-- openable qty + farmed DE-able gear qty (bags 0-4 + keyring only)
 local openQty = {}
+local farmGearQty = {}
 local bagDirty = false
 local bagDirtyAt = 0
 
@@ -198,9 +198,36 @@ local function isOpenable(itemID, link)
   return yes
 end
 
+local function slotCount(bag, slot)
+  if GetContainerItemInfo then
+    local _, c = GetContainerItemInfo(bag, slot)
+    return c or 1
+  elseif C_Container and C_Container.GetContainerItemInfo then
+    local info = C_Container.GetContainerItemInfo(bag, slot)
+    return info and info.stackCount or 1
+  end
+  return 1
+end
+
+local function sessionGearIDs()
+  local ids = {}
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if not s or not s.rows then return ids end
+  for _, row in pairs(s.rows) do
+    if row.itemID and row.itemID > 0 and not DE_REAGENT[row.itemID]
+      and (row.quality or 0) >= 2
+      and row.method ~= "GOLD" and row.method ~= "PENDING" then
+      ids[row.itemID] = true
+    end
+  end
+  return ids
+end
+
 local function recountOpenables()
   wipe(openQty)
+  wipe(farmGearQty)
   if not GetBagSlots then initBags() end
+  local gear = sessionGearIDs()
   for i = 1, #BAGS do
     local bag = BAGS[i]
     local slots = GetBagSlots(bag)
@@ -209,17 +236,14 @@ local function recountOpenables()
         local link = GetBagLink(bag, slot)
         if link then
           local id = GT.ParseItemID(link)
-          if id and (OPENABLE[id] or openableCache[id]) then
-            -- count stacks
-            local count = 1
-            if GetContainerItemInfo then
-              local _, c = GetContainerItemInfo(bag, slot)
-              count = c or 1
-            elseif C_Container and C_Container.GetContainerItemInfo then
-              local info = C_Container.GetContainerItemInfo(bag, slot)
-              count = info and info.stackCount or 1
+          if id then
+            local count = slotCount(bag, slot)
+            if OPENABLE[id] or openableCache[id] then
+              openQty[id] = (openQty[id] or 0) + count
             end
-            openQty[id] = (openQty[id] or 0) + count
+            if gear[id] then
+              farmGearQty[id] = (farmGearQty[id] or 0) + count
+            end
           end
         end
       end
@@ -241,6 +265,7 @@ local function pushOpen(itemID, n, hadFrame)
       decremented = false,
     }
   end
+  if GT.Events.NeedPoll then GT.Events.NeedPoll() end
 end
 
 local function oldestPending(now)
@@ -309,10 +334,7 @@ local function valueAndCredit(link, count, source)
 end
 
 local function handleItemChat(msg)
-  if GetTime() < destroyUntil then
-    GT.Log("ignore created/destroy-window %s", msg)
-    return
-  end
+  if not GT.IsSessionLive() then return end
 
   expirePending()
   local now = GetTime()
@@ -368,6 +390,13 @@ local function handleItemChat(msg)
   local real = link:match("(|c%x+|Hitem:.+|h%[.-%]|h|r)") or link:match("(|Hitem:.+|h%[.-%]|h)")
   if real then link = real end
   count = count or 1
+  local itemID = GT.ParseItemID(link)
+  if isDestroyOutput(itemID) then
+    if GetTime() < destroyUntil or GetTime() < encWindowUntil or enchantingWindowOpen() then
+      GT.Log("ignore DE reagent %s", link)
+      return
+    end
+  end
 
   if openReplace then
     local credit = replacePath(p)
@@ -380,8 +409,6 @@ local function handleItemChat(msg)
     end
     return
   end
-
-  if not GT.IsSessionLive() then return end
 
   if isPush then
     local questOK = GoldTrackDB.countQuestRewards and GetTime() < (questUntil or 0)
@@ -401,6 +428,7 @@ local function handleItemChat(msg)
 end
 
 local function handleMoneyChat(msg)
+  if not GT.IsSessionLive() then return end
   expirePending()
   local now = GetTime()
   local p = oldestPending(now)
@@ -492,23 +520,34 @@ function GT.Events.Transfer(open)
 end
 
 function GT.Events.OnBag()
+  if not GT.IsSessionLive() then return end
   bagDirty = true
   bagDirtyAt = GetTime()
+  GT.Events.NeedPoll()
 end
 
 local function flushBags()
   if not bagDirty then return end
   if GetTime() - bagDirtyAt < GT.BAG_DEBOUNCE then return end
   bagDirty = false
-  local before = {}
-  for id, n in pairs(openQty) do before[id] = n end
+  local beforeOpen = {}
+  for id, n in pairs(openQty) do beforeOpen[id] = n end
+  local beforeGear = {}
+  for id, n in pairs(farmGearQty) do beforeGear[id] = n end
   recountOpenables()
   local had = lootRecent()
-  for id, prev in pairs(before) do
+  for id, prev in pairs(beforeOpen) do
     local now = openQty[id] or 0
     if now < prev then
       pushOpen(id, prev - now, had)
       GT.Log("openable -%d item %d", prev - now, id)
+    end
+  end
+  for id, prev in pairs(beforeGear) do
+    local now = farmGearQty[id] or 0
+    if now < prev then
+      markDestroy("farmed gear left bags " .. id)
+      break
     end
   end
 end
@@ -543,43 +582,81 @@ function GT.Events.ResetRuntime()
   pendingInfoN = 0
 end
 
+function GT.Events.OnSessionStart()
+  bagDirty = false
+  recountOpenables()
+  GT.Events.SetListen(true)
+end
+
+local evFrame
+local listenOn = false
+local pollAcc = 0
+local opens = {
+  MAIL_SHOW = true, TRADE_SHOW = true, MERCHANT_SHOW = true,
+  AUCTION_HOUSE_SHOW = true, BANKFRAME_OPENED = true,
+  GUILDBANKFRAME_OPENED = true, TRAINER_SHOW = true,
+  TAXIMAP_OPENED = true, QUEST_COMPLETE = true, QUEST_FINISHED = true,
+  TRADE_SKILL_SHOW = true,
+}
+local closes = {
+  MAIL_CLOSED = true, TRADE_CLOSED = true, MERCHANT_CLOSED = true,
+  AUCTION_HOUSE_CLOSED = true, BANKFRAME_CLOSED = true,
+  GUILDBANKFRAME_CLOSED = true, TRAINER_CLOSED = true,
+  TAXIMAP_CLOSED = true, TRADE_SKILL_CLOSE = true,
+}
+
+local function poll(_, e)
+  pollAcc = pollAcc + e
+  if pollAcc < 0.05 then return end
+  pollAcc = 0
+  if bagDirty then flushBags() end
+  if pendingN > 0 then expirePending() end
+  if not bagDirty and pendingN == 0 and evFrame then
+    evFrame:SetScript("OnUpdate", nil)
+  end
+end
+
+function GT.Events.NeedPoll()
+  if evFrame and not evFrame:GetScript("OnUpdate") then
+    pollAcc = 0
+    evFrame:SetScript("OnUpdate", poll)
+  end
+end
+
+function GT.Events.SetListen(on)
+  if not evFrame or listenOn == on then return end
+  listenOn = on
+  local f = evFrame
+  if on then
+    f:RegisterEvent("CHAT_MSG_LOOT")
+    f:RegisterEvent("CHAT_MSG_MONEY")
+    f:RegisterEvent("LOOT_OPENED")
+    f:RegisterEvent("LOOT_CLOSED")
+    if LOOT_READY then f:RegisterEvent("LOOT_READY") end
+    if _G.BAG_UPDATE_DELAYED then
+      f:RegisterEvent("BAG_UPDATE_DELAYED")
+    else
+      f:RegisterEvent("BAG_UPDATE")
+    end
+    f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+    for ev in pairs(opens) do f:RegisterEvent(ev) end
+    for ev in pairs(closes) do f:RegisterEvent(ev) end
+  else
+    f:UnregisterAllEvents()
+    f:SetScript("OnUpdate", nil)
+    bagDirty = false
+  end
+end
+
 function GT.Events.Init()
   compileAll()
   initBags()
-  recountOpenables()
   deName = GetSpellInfo(13262)
   prospectName = GetSpellInfo(31252)
 
-  local f = CreateFrame("Frame")
-  f:RegisterEvent("CHAT_MSG_LOOT")
-  f:RegisterEvent("CHAT_MSG_MONEY")
-  f:RegisterEvent("LOOT_OPENED")
-  f:RegisterEvent("LOOT_CLOSED")
-  if LOOT_READY then f:RegisterEvent("LOOT_READY") end
-  f:RegisterEvent("BAG_UPDATE")
-  if GT.Events and _G.BAG_UPDATE_DELAYED then
-    f:RegisterEvent("BAG_UPDATE_DELAYED")
-  end
-  f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-  f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
-
-  local opens = {
-    MAIL_SHOW = true, TRADE_SHOW = true, MERCHANT_SHOW = true,
-    AUCTION_HOUSE_SHOW = true, BANKFRAME_OPENED = true,
-    GUILDBANKFRAME_OPENED = true, TRAINER_SHOW = true,
-    TAXIMAP_OPENED = true, QUEST_COMPLETE = true, QUEST_FINISHED = true,
-    TRADE_SKILL_SHOW = true,
-  }
-  local closes = {
-    MAIL_CLOSED = true, TRADE_CLOSED = true, MERCHANT_CLOSED = true,
-    AUCTION_HOUSE_CLOSED = true, BANKFRAME_CLOSED = true,
-    GUILDBANKFRAME_CLOSED = true, TRAINER_CLOSED = true,
-    TAXIMAP_CLOSED = true, TRADE_SKILL_CLOSE = true,
-  }
-  for ev in pairs(opens) do f:RegisterEvent(ev) end
-  for ev in pairs(closes) do f:RegisterEvent(ev) end
-
-  f:SetScript("OnEvent", function(_, event, ...)
+  evFrame = CreateFrame("Frame")
+  evFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHAT_MSG_LOOT" then
       handleItemChat(...)
     elseif event == "CHAT_MSG_MONEY" then
@@ -626,13 +703,8 @@ function GT.Events.Init()
     end
   end)
 
-  -- light poll: bag debounce + pending expiry (0.1s)
-  local acc = 0
-  f:SetScript("OnUpdate", function(_, e)
-    acc = acc + e
-    if acc < 0.10 then return end
-    acc = 0
-    if bagDirty then flushBags() end
-    if pendingN > 0 then expirePending() end
-  end)
+  if GT.IsSessionLive() then
+    GT.Events.SetListen(true)
+    recountOpenables()
+  end
 end

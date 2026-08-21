@@ -3,7 +3,7 @@ local GT = GoldTrack
 
 GT.UI = GT.UI or {}
 
-local main, tabs, pages
+local main, tabs, pages, histWin
 local lootRows = {}
 local LOOT_VISIBLE = 14
 local lootSort = "value"
@@ -38,8 +38,8 @@ local function fontPath()
   return p or "Fonts\\FRIZQT__.TTF"
 end
 
-local COL_MUTED = { 0.722, 0.722, 0.722 } -- #b8b8b8
-local COL_GOLD = { 1, 0.820, 0 } -- #ffd100
+local COL_MUTED = { 0.722, 0.722, 0.722 }
+local COL_GOLD = { 1, 0.820, 0 }
 
 local function applyPoint(frame, p, defx, defy)
   frame:ClearAllPoints()
@@ -50,7 +50,6 @@ local function applyPoint(frame, p, defx, defy)
   end
 end
 
--- One row per stat, centered on a minus:  name  -  value
 local function statRow(parent, prev, label, big)
   local row = CreateFrame("Frame", nil, parent)
   local sz = big and 20 or 13
@@ -142,7 +141,8 @@ function GT.UI.BuildMain()
   tinsert(UISpecialFrames, "GoldTrackMain")
 
   local close = CreateFrame("Button", nil, main, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", 2, 2)
+  close:SetPoint("TOPRIGHT", 2, 4)
+  close:SetFrameLevel(main:GetFrameLevel() + 10)
   close:SetScript("OnClick", function() main:Hide() end)
 
   tabs, pages = {}, {}
@@ -169,7 +169,6 @@ function GT.UI.BuildMain()
     pages[id] = p
   end
 
-  -- Total: stats fill the top; history list uses the rest of the pane
   do
     local p = pages.total
     p.vals = {}
@@ -198,7 +197,6 @@ function GT.UI.BuildMain()
       p.vals[src[i][1]] = row.v
       prev = row
     end
-    p.meth = prev
 
     local wipe = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
     wipe:SetSize(120, 22)
@@ -206,34 +204,13 @@ function GT.UI.BuildMain()
     wipe:SetText("Clear lifetime")
     wipe:SetScript("OnClick", function() StaticPopup_Show("GOLDTRACK_WIPE") end)
 
-    local hist = p:CreateFontString(nil, "OVERLAY")
-    hist:SetFont(fontPath(), 17, "")
-    hist:SetPoint("TOPLEFT", p.meth, "BOTTOMLEFT", 0, -10)
-    hist:SetText("History")
-    hist:SetTextColor(COL_GOLD[1], COL_GOLD[2], COL_GOLD[3])
-
-    p.list = CreateFrame("ScrollFrame", "GoldTrackArchScroll", p, "FauxScrollFrameTemplate")
-    p.list:SetPoint("TOPLEFT", hist, "BOTTOMLEFT", -2, -4)
-    p.list:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -28, 30)
-    p.ARCH_N = 12
-    p.arch = {}
-    for i = 1, p.ARCH_N do
-      local r = CreateFrame("Button", nil, p)
-      r:SetHeight(18)
-      r:SetPoint("TOPLEFT", p.list, "TOPLEFT", 0, -(i - 1) * 18)
-      r:SetPoint("TOPRIGHT", p.list, "TOPRIGHT", 0, -(i - 1) * 18)
-      r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-      r.fs:SetAllPoints()
-      r.fs:SetJustifyH("LEFT")
-      r.fs:SetWordWrap(false)
-      p.arch[i] = r
-    end
-    p.list:SetScript("OnVerticalScroll", function(self, off)
-      FauxScrollFrame_OnVerticalScroll(self, off, 18, GT.UI.UpdateArchive)
-    end)
+    local histBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+    histBtn:SetSize(80, 22)
+    histBtn:SetPoint("BOTTOMRIGHT", -4, 4)
+    histBtn:SetText("History")
+    histBtn:SetScript("OnClick", function() GT.UI.ToggleHistory() end)
   end
 
-  -- Session: large gold / g/h, then details; buttons at the bottom
   do
     local p = pages.session
     p.vals = {}
@@ -284,10 +261,8 @@ function GT.UI.BuildMain()
     rst:SetScript("OnClick", function() StaticPopup_Show("GOLDTRACK_RESET") end)
   end
 
-  -- Loot
   do
     local p = pages.loot
-    -- Filter on row 1, column headers on row 2, list below. Nothing shares a line.
     local COL_METH, COL_VAL, COL_QTY = 36, 88, 36
 
     local fl = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -317,6 +292,15 @@ function GT.UI.BuildMain()
     local cbl = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     cbl:SetPoint("LEFT", cb, "RIGHT", 0, 0)
     cbl:SetText("Hide 0")
+    local function hide0Tip(self)
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetText("Hide 0", 1, 1, 1)
+      GameTooltip:AddLine("Hide loot rows whose estimated gold is 0.", 0.8, 0.8, 0.8, true)
+      GameTooltip:AddLine("Coin rows still show. Uncheck to see vendor-0 / NONE items.", 0.8, 0.8, 0.8, true)
+      GameTooltip:Show()
+    end
+    cb:SetScript("OnEnter", hide0Tip)
+    cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
     cb:SetScript("OnClick", function(self)
       lootHideZero = self:GetChecked()
       GT.UI.UpdateLoot()
@@ -411,15 +395,23 @@ function GT.UI.BuildMain()
         if rw.ahMode == "expected_single" then
           GameTooltip:AddLine("One-post EV also multiplies payout by sell rate.", 1, 0.4, 0.3, true)
         end
+        if rw.manual then
+          GameTooltip:AddLine("Manual override. Click to edit.", 1, 0.82, 0, true)
+        else
+          GameTooltip:AddLine("Click to edit value.", 0.6, 0.6, 0.6, true)
+        end
         GameTooltip:AddLine(rw.why or "", 0.5, 0.8, 1, true)
         GameTooltip:Show()
       end)
       r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      r:SetScript("OnClick", function(self)
+        if self.row then GT.UI.OpenLootEdit(self.row) end
+      end)
       lootRows[i] = r
     end
     p.empty = p:CreateFontString(nil, "OVERLAY", "GameFontDisable")
     p.empty:SetPoint("CENTER", p.scroll, "CENTER")
-    p.empty:SetText("Start a session and loot something.")
+    p.empty:SetText("Start a session and loot something. Click a row to edit value.")
   end
 
   GT.UI.main = main
@@ -428,19 +420,278 @@ function GT.UI.BuildMain()
   return main
 end
 
+local editFrame, editRow
+local METH_CYCLE = { "AH", "DE", "VENDOR", "NONE" }
+
+local function refreshEdit()
+  if not editFrame or not editRow then return end
+  editFrame.title:SetText(editRow.name or "?")
+  local pill = editRow.method == "VENDOR" and "VEN" or (editRow.method or "-")
+  if editRow.manual then pill = pill .. "*" end
+  editFrame.meth:SetText(pill)
+  editFrame.qty:SetText("qty " .. tostring(editRow.count or 0))
+  if editRow.method == "GOLD" then
+    editFrame.gold:SetText(GT.FmtNumber((editRow.count or 0) / 10000))
+    editFrame.goldLab:SetText("Total gold")
+  else
+    editFrame.gold:SetText(GT.FmtNumber(GT.CopperToGold(editRow.unitCopper or 0)))
+    editFrame.goldLab:SetText("Gold / item")
+  end
+  local tot = (editRow.count or 0) * (editRow.unitCopper or 0)
+  editFrame.sum:SetText("Row = " .. GT.FormatCopper(tot))
+end
+
+local function dockBesideMain(frame)
+  if not main then return end
+  if not main:IsShown() then main:Show() end
+  frame:ClearAllPoints()
+  local need = frame:GetWidth() or 240
+  local left = main:GetLeft()
+  if left and left > need + 8 then
+    frame:SetPoint("TOPRIGHT", main, "TOPLEFT", -4, 0)
+  else
+    frame:SetPoint("TOPLEFT", main, "TOPRIGHT", 4, 0)
+  end
+end
+
+function GT.UI.OpenLootEdit(row)
+  if not row or not row.key then return end
+  if not editFrame then
+    local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+    local f = CreateFrame("Frame", "GoldTrackLootEdit", UIParent, tmpl)
+    f:SetSize(240, 168)
+    f:SetFrameStrata("DIALOG")
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetClampedToScreen(true)
+    GT.UI.Backdrop(f)
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+
+    local x = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    x:SetPoint("TOPRIGHT", 2, 4)
+    x:SetScript("OnClick", function() f:Hide() end)
+
+    local title = f:CreateFontString(nil, "OVERLAY")
+    title:SetFont(fontPath(), 13, "")
+    title:SetPoint("TOPLEFT", 10, -10)
+    title:SetPoint("RIGHT", x, "LEFT", -4, 0)
+    title:SetJustifyH("LEFT")
+    title:SetWordWrap(false)
+    title:SetTextColor(1, 0.820, 0)
+    f.title = title
+
+    local qty = f:CreateFontString(nil, "OVERLAY")
+    qty:SetFont(fontPath(), 11, "")
+    qty:SetPoint("TOPLEFT", 10, -28)
+    qty:SetTextColor(0.722, 0.722, 0.722)
+    f.qty = qty
+
+    local ml = f:CreateFontString(nil, "OVERLAY")
+    ml:SetFont(fontPath(), 12, "")
+    ml:SetPoint("TOPLEFT", 10, -50)
+    ml:SetText("Src")
+    ml:SetTextColor(0.722, 0.722, 0.722)
+    local mb = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    mb:SetSize(72, 20)
+    mb:SetPoint("LEFT", ml, "RIGHT", 10, 0)
+    mb:SetScript("OnClick", function()
+      if not editRow or editRow.method == "GOLD" then return end
+      local cur, idx = editRow.method, 1
+      for i = 1, #METH_CYCLE do
+        if METH_CYCLE[i] == cur then idx = i; break end
+      end
+      idx = idx + 1
+      if idx > #METH_CYCLE then idx = 1 end
+      GT.Ledger.Override(editRow.key, METH_CYCLE[idx], nil)
+      refreshEdit()
+    end)
+    f.meth = mb
+
+    local gl = f:CreateFontString(nil, "OVERLAY")
+    gl:SetFont(fontPath(), 12, "")
+    gl:SetPoint("TOPLEFT", 10, -78)
+    gl:SetText("Gold / item")
+    gl:SetTextColor(0.722, 0.722, 0.722)
+    f.goldLab = gl
+    local ge = CreateFrame("EditBox", "GoldTrackLootGold", f, "InputBoxTemplate")
+    ge:SetSize(72, 20)
+    ge:SetPoint("LEFT", gl, "RIGHT", 10, 0)
+    ge:SetAutoFocus(false)
+    ge:SetMaxLetters(12)
+    local function applyGold()
+      if not editRow then return end
+      local n = GT.ParseNumber(ge:GetText())
+      if not n then return end
+      GT.Ledger.Override(editRow.key, nil, GT.GoldToCopper(n))
+      refreshEdit()
+    end
+    ge:SetScript("OnEnterPressed", function(self) applyGold(); self:ClearFocus() end)
+    ge:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    ge:SetScript("OnEditFocusLost", applyGold)
+    f.gold = ge
+
+    local function use(cop)
+      return function()
+        if not editRow or editRow.method == "GOLD" then return end
+        GT.Ledger.Override(editRow.key, nil, cop())
+        refreshEdit()
+      end
+    end
+    local bv = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    bv:SetSize(56, 18)
+    bv:SetPoint("TOPLEFT", 10, -106)
+    bv:SetText("Vendor")
+    bv:SetScript("OnClick", use(function() return editRow.vendor or 0 end))
+    local bd = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    bd:SetSize(40, 18)
+    bd:SetPoint("LEFT", bv, "RIGHT", 4, 0)
+    bd:SetText("DE")
+    bd:SetScript("OnClick", use(function() return editRow.de or 0 end))
+    local ba = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    ba:SetSize(56, 18)
+    ba:SetPoint("LEFT", bd, "RIGHT", 4, 0)
+    ba:SetText("AH net")
+    ba:SetScript("OnClick", use(function() return editRow.ahNet or 0 end))
+    local br = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    br:SetSize(52, 18)
+    br:SetPoint("LEFT", ba, "RIGHT", 4, 0)
+    br:SetText("Undo")
+    br:SetScript("OnClick", function()
+      if not editRow then return end
+      GT.Ledger.RevertOverride(editRow.key)
+      refreshEdit()
+    end)
+
+    local sum = f:CreateFontString(nil, "OVERLAY")
+    sum:SetFont(fontPath(), 12, "")
+    sum:SetPoint("BOTTOMLEFT", 10, 10)
+    sum:SetPoint("BOTTOMRIGHT", -10, 10)
+    sum:SetJustifyH("LEFT")
+    sum:SetTextColor(1, 1, 1)
+    f.sum = sum
+
+    editFrame = f
+  end
+  editRow = row
+  refreshEdit()
+  if main then
+    if not main:IsShown() then main:Show() end
+    dockBesideMain(editFrame)
+  end
+  editFrame:Show()
+end
+
+function GT.UI.ToggleHistory()
+  if not histWin then GT.UI.BuildHistory() end
+  if histWin:IsShown() then
+    histWin:Hide()
+  else
+    if main and not main:IsShown() then main:Show() end
+    dockBesideMain(histWin)
+    histWin:Show()
+    GT.UI.UpdateArchive()
+  end
+end
+
+function GT.UI.BuildHistory()
+  if histWin then return histWin end
+  local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
+  local f = CreateFrame("Frame", "GoldTrackHistory", UIParent, tmpl)
+  f:SetSize(380, 320)
+  f:SetFrameStrata("DIALOG")
+  f:SetMovable(true)
+  f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetClampedToScreen(true)
+  GT.UI.Backdrop(f)
+  f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+  f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+  f:Hide()
+  tinsert(UISpecialFrames, "GoldTrackHistory")
+
+  local title = f:CreateFontString(nil, "OVERLAY")
+  title:SetFont(fontPath(), 17, "")
+  title:SetPoint("TOPLEFT", 12, -10)
+  title:SetText("Session history")
+  title:SetTextColor(COL_GOLD[1], COL_GOLD[2], COL_GOLD[3])
+
+  local x = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+  x:SetPoint("TOPRIGHT", 2, 4)
+  x:SetScript("OnClick", function() f:Hide() end)
+
+  local hdr = f:CreateFontString(nil, "OVERLAY")
+  hdr:SetFont(fontPath(), 11, "")
+  hdr:SetPoint("TOPLEFT", 12, -32)
+  hdr:SetPoint("RIGHT", -28, 0)
+  hdr:SetJustifyH("LEFT")
+  hdr:SetText("When            Zone                 Time       Gold")
+  hdr:SetTextColor(COL_MUTED[1], COL_MUTED[2], COL_MUTED[3])
+
+  local ARCH_N = 14
+  f.ARCH_N = ARCH_N
+  f.list = CreateFrame("ScrollFrame", "GoldTrackArchScroll", f, "FauxScrollFrameTemplate")
+  f.list:SetPoint("TOPLEFT", 8, -48)
+  f.list:SetPoint("BOTTOMRIGHT", -28, 10)
+  f.arch = {}
+  for i = 1, ARCH_N do
+    local r = CreateFrame("Button", nil, f)
+    r:SetHeight(18)
+    r:SetPoint("TOPLEFT", f.list, "TOPLEFT", 4, -(i - 1) * 18)
+    r:SetPoint("TOPRIGHT", f.list, "TOPRIGHT", 0, -(i - 1) * 18)
+    r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    r.fs = r:CreateFontString(nil, "OVERLAY")
+    r.fs:SetFont(fontPath(), 12, "")
+    r.fs:SetAllPoints()
+    r.fs:SetJustifyH("LEFT")
+    r.fs:SetWordWrap(false)
+    r:SetScript("OnEnter", function(self)
+      if not self.a then return end
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:SetText(self.a.zone or "Session", 1, 0.82, 0)
+      GameTooltip:AddDoubleLine("Gold", GT.FormatCopper(self.a.copper or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+      GameTooltip:AddDoubleLine("Time", GT.FormatElapsed(self.a.ms or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+      if self.a.gh and self.a.gh > 0 then
+        GameTooltip:AddDoubleLine("g/h", GT.FormatGPH(self.a.gh), 0.7, 0.7, 0.7, 1, 1, 1)
+      end
+      local bm = self.a.byMethod
+      if bm then
+        GameTooltip:AddDoubleLine("AH", GT.FormatCopper(bm.AH or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+        GameTooltip:AddDoubleLine("DE", GT.FormatCopper(bm.DE or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Vendor", GT.FormatCopper(bm.VENDOR or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Coin", GT.FormatCopper(bm.GOLD or 0), 0.7, 0.7, 0.7, 1, 1, 1)
+      end
+      GameTooltip:Show()
+    end)
+    r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    f.arch[i] = r
+  end
+  f.list:SetScript("OnVerticalScroll", function(self, off)
+    FauxScrollFrame_OnVerticalScroll(self, off, 18, GT.UI.UpdateArchive)
+  end)
+  f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+  f.empty:SetPoint("CENTER", f.list, "CENTER")
+  f.empty:SetText("No archived sessions yet. Reset a session to store one.")
+
+  histWin = f
+  GT.UI.hist = f
+  return f
+end
+
 function GT.UI.UpdateArchive()
-  local p = pages and pages.total
-  if not p or not p:IsShown() then return end
+  if not histWin or not histWin:IsShown() then return end
   local arch = GoldTrackCharDB.total.archives or {}
   local n = #arch
-  local vis = p.ARCH_N or 12
-  FauxScrollFrame_Update(p.list, n, vis, 18)
-  local off = FauxScrollFrame_GetOffset(p.list)
+  local vis = histWin.ARCH_N or 14
+  FauxScrollFrame_Update(histWin.list, n, vis, 18)
+  local off = FauxScrollFrame_GetOffset(histWin.list)
   for i = 1, vis do
-    local idx = n - off - i + 1 -- newest first
-    local r = p.arch[i]
+    local idx = n - off - i + 1
+    local r = histWin.arch[i]
     local a = arch[idx]
     if a then
+      r.a = a
       r.fs:SetText(format("%s  %s  %s  %s",
         date("%m-%d %H:%M", a.t or 0),
         a.zone or "",
@@ -448,9 +699,11 @@ function GT.UI.UpdateArchive()
         GT.FormatCopper(a.copper or 0)))
       r:Show()
     else
+      r.a = nil
       r:Hide()
     end
   end
+  if n == 0 then histWin.empty:Show() else histWin.empty:Hide() end
 end
 
 function GT.UI.UpdateLoot()
@@ -489,6 +742,7 @@ function GT.UI.UpdateLoot()
       r.qty:SetText(row.method == "GOLD" and "" or tostring(row.count))
       r.val:SetText(GT.FormatCopper((row.count or 0) * (row.unitCopper or 0)))
       local pill = row.method == "VENDOR" and "VEN" or (row.method == "GOLD" and "G" or (row.method or "-"))
+      if row.manual then pill = pill .. "*" end
       r.meth:SetText(pill)
       local mc = METHCOL[row.method] or METHCOL.NONE
       r.meth:SetTextColor(mc[1], mc[2], mc[3])
@@ -507,7 +761,6 @@ function GT.UI.UpdateMain()
   local t = GoldTrackCharDB.total
   local cms = GT.NowMs()
   local tms = (t.activeMs or 0) + (s.state == "RUNNING" and cms or (s.activeMs or 0))
-  -- Total includes current live
   local tcop = (t.copper or 0) + (s.copper or 0)
 
   if pages.total:IsShown() then
@@ -523,8 +776,8 @@ function GT.UI.UpdateMain()
     p.vals.srcDE:SetText(GT.FormatCopper((bm.DE or 0) + (s.byMethod.DE or 0)))
     p.vals.srcVEN:SetText(GT.FormatCopper((bm.VENDOR or 0) + (s.byMethod.VENDOR or 0)))
     p.vals.srcGOLD:SetText(GT.FormatCopper((bm.GOLD or 0) + (s.byMethod.GOLD or 0)))
-    GT.UI.UpdateArchive()
   end
+  if histWin and histWin:IsShown() then GT.UI.UpdateArchive() end
 
   if pages.session:IsShown() then
     local p = pages.session
@@ -542,10 +795,15 @@ function GT.UI.UpdateMain()
     p.vals.srcDE:SetText(src(s.byMethod.DE))
     p.vals.srcVEN:SetText(src(s.byMethod.VENDOR))
     p.vals.srcGOLD:SetText(src(s.byMethod.GOLD))
-    local ps = GT.Prices.status
-    p.health:SetText(format("TSM: %s   Auctionator: %s   sellrate: %s",
-      ps.tsm and "yes" or "no",
-      (ps.atr or ps.atrLegacy) and "yes" or "no",
+    local tsmOn, atrOn, nitOn = GT.AddonsOn()
+    local function yn(on)
+      return on and "|cff20ff20yes|r" or "|cffff3030no|r"
+    end
+    local ps = GT.Prices and GT.Prices.status or {}
+    p.health:SetText(format("TSM: %s   Auctionator: %s   NIT: %s   sellrate: |cffb8b8b8%s|r",
+      yn(tsmOn),
+      yn(atrOn or ps.atr or ps.atrLegacy),
+      yn(nitOn),
       ps.sellrate or "none"))
     p.start:SetText(s.state == "RUNNING" and "Stop" or "Start")
   end
@@ -561,6 +819,5 @@ end
 
 function GT.UI.Init()
   GT.UI.BuildHUD()
-  -- main is lazy-built on first open
   GT.UI.UpdateHUD()
 end

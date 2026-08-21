@@ -19,7 +19,8 @@ GT.PENDING_MAX = 32
 GT.OPENABLE_CACHE_MAX = 512
 
 -- Timing
-GT.HUD_INTERVAL = 0.20
+GT.HUD_INTERVAL = 1.0
+GT.NIT_LOCK_MIN = 1 -- NIT ticker is 1s; never pull faster
 GT.BAG_DEBOUNCE = 0.05
 GT.TRANSFER_GRACE = 2.0
 GT.OPEN_TTL = 2.0
@@ -34,6 +35,8 @@ GT.defaults = {
   mainScale = 1,
   hudLocked = false,
   showHUD = true,
+  hudMinLevelOn = true,
+  hudMinLevel = 70,
   showMinimap = true,
   hideHudInCombat = false,
   hudPoint = nil, -- nil = under minimap
@@ -189,6 +192,7 @@ function GT.SessionStart()
   end
   GT.afkPaused = false
   GT.StartSegment()
+  if GT.Events and GT.Events.OnSessionStart then GT.Events.OnSessionStart() end
   refreshUI()
 end
 
@@ -198,6 +202,7 @@ function GT.SessionStop()
   GT.FoldSegment()
   s.state = "STOPPED"
   GT.afkPaused = false
+  if GT.Events and GT.Events.SetListen then GT.Events.SetListen(false) end
   refreshUI()
 end
 
@@ -220,7 +225,10 @@ function GT.SessionReset(force)
   s.order = {}
   GT.segmentStart = nil
   GT.afkPaused = false
-  if GT.Events then GT.Events.ResetRuntime() end
+  if GT.Events then
+    GT.Events.ResetRuntime()
+    if GT.Events.SetListen then GT.Events.SetListen(false) end
+  end
   refreshUI()
 end
 
@@ -262,10 +270,9 @@ function GT.OnLeavingWorld()
 end
 
 function GT.OnLogout()
+  -- /reload also fires LOGOUT. Do not STOP here.
+  -- ADDON_LOADED uses leavingAt gap: short = reload (keep RUNNING), long = real logout.
   GT.FoldSegment()
-  if not GoldTrackDB.resumeAfterLogout then
-    GoldTrackCharDB.session.state = "STOPPED"
-  end
   GoldTrackCharDB.session.leavingAt = time()
 end
 
@@ -318,7 +325,11 @@ end
 function GT.OnEnteringWorld()
   GT.StartSegment()
   if GT.UI and GT.UI.Init then GT.UI.Init() end
+  -- NIT writes leftTime on leave; it can lag behind ENTERING_WORLD
+  GT.PullNITLockout(true)
   GT.RefreshHUD()
+  GT.After(0.5, function() GT.PullNITLockout(true); GT.RefreshHUD() end)
+  GT.After(2, function() GT.PullNITLockout(true); GT.RefreshHUD() end)
 end
 
 -- Slash -----------------------------------------------------------------
@@ -398,6 +409,7 @@ boot:RegisterEvent("PLAYER_ENTERING_WORLD")
 boot:RegisterEvent("PLAYER_LEAVING_WORLD")
 boot:RegisterEvent("PLAYER_LOGOUT")
 boot:RegisterEvent("PLAYER_FLAGS_CHANGED")
+boot:RegisterEvent("PLAYER_LEVEL_UP")
 boot:SetScript("OnEvent", function(_, event, arg1)
   if event == "ADDON_LOADED" then
     if arg1 ~= ADDON then return end
@@ -419,6 +431,8 @@ boot:SetScript("OnEvent", function(_, event, arg1)
     if arg1 == "player" or arg1 == nil then
       GT.OnAFK(UnitIsAFK("player"))
     end
+  elseif event == "PLAYER_LEVEL_UP" then
+    if GT.UI and GT.UI.ApplyHUDVisibility then GT.UI.ApplyHUDVisibility() end
   end
 end)
 
@@ -432,6 +446,10 @@ function GT.RefreshMain()
 end
 
 function GT.After(sec, fn)
+  if C_Timer and C_Timer.After then
+    C_Timer.After(sec, fn)
+    return
+  end
   local f = CreateFrame("Frame")
   local t = 0
   f:SetScript("OnUpdate", function(_, e)
@@ -445,6 +463,11 @@ end
 
 function GT.RefreshTSMRows(silent)
   if not GT.Ledger or not GT.Ledger.RefreshTSM then return end
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if not s or not s.order or #s.order == 0 then
+    if not silent then GT.Print("TSM refresh: 0 items") end
+    return
+  end
   local n, hit = GT.Ledger.RefreshTSM()
   if not silent then
     GT.Print(format("TSM refresh: %d items, %d have region data (not fallback)", n, hit))
@@ -454,6 +477,72 @@ end
 
 -- True if this character can disenchant (knows spell 13262).
 local encCached, encAt = nil, 0
+local addonsAt, addonsT, addonsA, addonsN = -99
+function GT.AddonsOn()
+  local now = GetTime()
+  if addonsT ~= nil and (now - addonsAt) < 30 then
+    return addonsT, addonsA, addonsN
+  end
+  local tsm = not not ((TSM_API and TSM_API.GetCustomPriceValue) or TSMAPI or TSMAPI_FOUR)
+  local atr = not not ((Auctionator and Auctionator.API and Auctionator.API.v1) or Atr_GetAuctionBuyout or Atr_GetAuctionPrice)
+  local nit = not not (_G.NIT)
+  if not nit and IsAddOnLoaded then
+    nit = not not (IsAddOnLoaded("NovaInstanceTracker") or IsAddOnLoaded("NovaInstanceTracker-TBC"))
+  end
+  addonsAt, addonsT, addonsA, addonsN = now, tsm, atr, nit
+  return tsm, atr, nit
+end
+
+-- Same numbers as NIT minibutton: NIT:getInstanceLockoutInfo().
+-- NIT itself walks the log every 1s (NIT:ticker -> updateDataBrokerText).
+-- We do not. Pull on instance enter/leave (plus 0.5s/2s for late leftTime)
+-- and once when a cached lock ages out. HUD 0.2s only paints the cache.
+-- returns used, max, nextFreeSec  (nextFreeSec only when used >= max)
+-- nil used = NIT not loaded
+local lockPulledAt, lockUsed, lockMax, lockTs = 0, nil, 5, nil
+
+local function lockLeft()
+  if lockUsed == nil then return nil end
+  if lockUsed >= (lockMax or 5) and type(lockTs) == "number" and lockTs > 0 then
+    local now = (GetServerTime and GetServerTime()) or time()
+    local left = 3600 - (now - lockTs)
+    if left < 0 then left = 0 end
+    return left
+  end
+  return nil
+end
+
+function GT.PullNITLockout(force)
+  if not force and (GetTime() - lockPulledAt) < (GT.NIT_LOCK_MIN or 1) then
+    return
+  end
+  lockPulledAt = GetTime()
+  local NIT = _G.NIT
+  if not NIT or type(NIT.getInstanceLockoutInfo) ~= "function" then
+    lockUsed, lockMax, lockTs = nil, 5, nil
+    return
+  end
+  local ok, hourCount, _, hourTimestamp = pcall(NIT.getInstanceLockoutInfo, NIT)
+  if not ok or type(hourCount) ~= "number" then
+    lockUsed, lockMax, lockTs = nil, 5, nil
+    return
+  end
+  lockUsed = hourCount
+  lockMax = NIT.hourlyLimit or 5
+  lockTs = hourTimestamp
+  if GT.UI and GT.UI.SetHUDPulse then GT.UI.SetHUDPulse() end
+end
+
+function GT.HourlyLockout()
+  if lockUsed ~= nil and type(lockTs) == "number" and lockTs > 0 then
+    local now = (GetServerTime and GetServerTime()) or time()
+    if now - lockTs >= 3600 then
+      GT.PullNITLockout()
+    end
+  end
+  return lockUsed, lockMax or 5, lockLeft()
+end
+
 function GT.CanDisenchant()
   local now = GetTime()
   if encCached ~= nil and (now - encAt) < 30 then return encCached end

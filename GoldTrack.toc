@@ -3,7 +3,7 @@
 ## Notes: Session gold/hour tracker for TBC Anniversary
 ## Author: GoldTrack
 ## Version: 1.0.0
-## OptionalDeps: Auctionator, TradeSkillMaster
+## OptionalDeps: Auctionator, TradeSkillMaster, NovaInstanceTracker
 ## SavedVariables: GoldTrackDB
 ## SavedVariablesPerCharacter: GoldTrackCharDB
 

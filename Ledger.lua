@@ -211,6 +211,60 @@ function GT.Ledger.FindOpenableRow(itemID)
   return nil
 end
 
+-- Manual override. Session copper / byMethod / g/h update immediately.
+function GT.Ledger.Override(mergeKey, method, unitCopper)
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if not s or not s.rows then return end
+  local row = s.rows[mergeKey]
+  if not row then return end
+  local old = (row.count or 0) * (row.unitCopper or 0)
+  bump(s.byMethod, row.method, -old)
+  s.copper = (s.copper or 0) - old
+  if row.origMethod == nil then
+    row.origMethod = row.method
+    row.origUnit = row.unitCopper
+    row.origCount = row.count
+  end
+  if method and method ~= "" then row.method = method end
+  if unitCopper ~= nil then
+    if unitCopper < 0 then unitCopper = 0 end
+    if row.method == "GOLD" then
+      row.unitCopper = 1
+      row.count = math.floor(unitCopper + 0.5)
+    else
+      row.unitCopper = math.floor(unitCopper + 0.5)
+    end
+  end
+  row.manual = true
+  row.why = "manual override"
+  local neu = (row.count or 0) * (row.unitCopper or 0)
+  s.copper = s.copper + neu
+  bump(s.byMethod, row.method, neu)
+  GT.RefreshHUD()
+  GT.RefreshMain()
+  return row
+end
+
+function GT.Ledger.RevertOverride(mergeKey)
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  local row = s and s.rows and s.rows[mergeKey]
+  if not row or row.origMethod == nil then return end
+  local old = (row.count or 0) * (row.unitCopper or 0)
+  bump(s.byMethod, row.method, -old)
+  s.copper = (s.copper or 0) - old
+  row.method = row.origMethod
+  row.unitCopper = row.origUnit
+  if row.origCount then row.count = row.origCount end
+  row.manual = nil
+  row.why = "reverted to loot-time"
+  local neu = (row.count or 0) * (row.unitCopper or 0)
+  s.copper = s.copper + neu
+  bump(s.byMethod, row.method, neu)
+  GT.RefreshHUD()
+  GT.RefreshMain()
+  return row
+end
+
 function GT.Ledger.ApplyPending(mergeKey, val)
   local s = GoldTrackCharDB.session
   local row = s.rows[mergeKey]

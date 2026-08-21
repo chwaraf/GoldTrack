@@ -157,7 +157,6 @@ local function normalizeRate(v)
 end
 
 function GT.Prices.GetSellRate(itemID, link)
-  GT.Prices.Probe()
   local cfg = GoldTrackDB
   for i = 1, #RATE_SOURCES do
     local src = RATE_SOURCES[i]
