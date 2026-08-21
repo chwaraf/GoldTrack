@@ -46,15 +46,28 @@ function GT.Ledger.RefreshTSM()
   if not s or not s.rows then return 0, 0 end
   GT.Prices.Probe()
   local n, hit = 0, 0
-  for _, row in pairs(s.rows) do
+  for key, row in pairs(s.rows) do
     if row.itemID and row.itemID > 0 and row.method ~= "GOLD" then
       n = n + 1
-      local r, src = GT.Prices.GetSellRate(row.itemID, row.link)
-      local spd = select(1, GT.Prices.GetSoldPerDay(row.itemID, row.link))
-      row.sellRate = r
-      row.sellRateSource = src
-      row.soldPerDay = spd
-      if src and src ~= "fallback" then hit = hit + 1 end
+      if row.method == "PENDING" then
+        -- Stuck PENDING row (GetItemInfo never delivered at loot time):
+        -- value it now rather than leaving it at 0 forever. Slight break of
+        -- freeze-at-loot, but a late real value beats a permanent zero.
+        local info = GT.Prices.Resolve(row.itemID, row.link)
+        if info then
+          info.itemID = row.itemID
+          local val = GT.ValueItem(info, false)
+          val.itemID = row.itemID
+          GT.Ledger.ApplyPending(key, val)
+        end
+      else
+        local r, src = GT.Prices.GetSellRate(row.itemID, row.link)
+        local spd = select(1, GT.Prices.GetSoldPerDay(row.itemID, row.link))
+        row.sellRate = r
+        row.sellRateSource = src
+        row.soldPerDay = spd
+        if src and src ~= "fallback" then hit = hit + 1 end
+      end
     end
   end
   return n, hit

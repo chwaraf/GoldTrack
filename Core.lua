@@ -12,7 +12,10 @@ GT.VERSION = "1.0.0"
 GT.PRICE_CACHE_TTL = 30
 GT.PRICE_CACHE_MAX = 256
 GT.DEDUP_SIZE = 200
-GT.DEDUP_TTL = 5
+-- Short TTL: the ring only needs to catch duplicate DELIVERY of one event
+-- (same frame / next frame). A 5s TTL swallowed legitimate repeats of the
+-- same item+count looted in quick succession (skinning, cloth runs).
+GT.DEDUP_TTL = 1
 GT.LOOT_ROW_MAX = 400
 GT.ARCHIVE_MAX = 30
 GT.PENDING_MAX = 32
@@ -25,6 +28,12 @@ GT.BAG_DEBOUNCE = 0.05
 GT.TRANSFER_GRACE = 2.0
 GT.OPEN_TTL = 2.0
 GT.DESTROY_SUPPRESS = 5.0
+-- Longer window when the trigger is session-farmed DE-able gear leaving bags:
+-- that signal only fires for gear we already counted, so a wider net is safe.
+GT.DESTROY_SUPPRESS_BAG = 15.0
+-- Armed at UNIT_SPELLCAST_START so the window covers the full cast even if
+-- SUCCEEDED is delayed or missed (bar/macro/addon casts included).
+GT.DESTROY_SUPPRESS_START = 10.0
 GT.RELOAD_GAP = 60
 GT.LOOT_FRAME_RECENT = 1.5
 
@@ -480,7 +489,8 @@ local encCached, encAt = nil, 0
 local addonsAt, addonsT, addonsA, addonsN = -99
 function GT.AddonsOn()
   local now = GetTime()
-  if addonsT ~= nil and (now - addonsAt) < 30 then
+  -- Short TTL so HUD T/A/N indicators track addon load state closely.
+  if addonsT ~= nil and (now - addonsAt) < 5 then
     return addonsT, addonsA, addonsN
   end
   local tsm = not not ((TSM_API and TSM_API.GetCustomPriceValue) or TSMAPI or TSMAPI_FOUR)

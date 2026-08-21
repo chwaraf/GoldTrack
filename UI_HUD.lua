@@ -113,7 +113,7 @@ function GT.UI.SetHUDPulse()
 end
 
 function GT.UI.UpdateHUD()
-  if not hud then return end
+  if not hud or not hud:IsShown() then return end
   local s = GoldTrackCharDB and GoldTrackCharDB.session
   if not s then return end
   local ms = GT.NowMs()

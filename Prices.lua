@@ -216,8 +216,9 @@ local function tsmByField(field, itemID, link)
   return nil, nil
 end
 
--- Auctionator scan age in seconds, or nil if unknown.
-local function atrAgeSec(itemID, link)
+-- Auctionator scan age in seconds, or nil if unknown. API fallback only;
+-- its unit is build-dependent (the <=48 => days heuristic lives there).
+local function atrAgeSecApi(itemID, link)
   local api = Auctionator and Auctionator.API and Auctionator.API.v1
   local function take(fn, ...)
     if not fn then return nil end
@@ -270,6 +271,37 @@ local function atrAgeSec(itemID, link)
   return nil
 end
 
+-- Unambiguous saved scan stamps first; only fall back to the API age whose
+-- unit is build-dependent on some Auctionator versions.
+local function atrAgeSec(itemID, link)
+  local stamps = {}
+  local st = Auctionator and Auctionator.SavedState
+  if type(st) == "table" then
+    stamps[#stamps + 1] = st.TimeOfLastSnapshot
+    stamps[#stamps + 1] = st.TimeOfLastFullScan
+    stamps[#stamps + 1] = st.TimeOfLastBrowseScan
+    stamps[#stamps + 1] = st.timeOfLastScan
+  end
+  if type(AUCTIONATOR_SAVEDVARS) == "table" then
+    stamps[#stamps + 1] = AUCTIONATOR_SAVEDVARS.LastScanTime
+  end
+  if Auctionator and Auctionator.Variables then
+    stamps[#stamps + 1] = Auctionator.Variables.LastFullScanTime
+  end
+  if Auctionator and Auctionator.Config and Auctionator.Config.Get then
+    local ok, v = pcall(Auctionator.Config.Get, "last_full_scan")
+    if ok then stamps[#stamps + 1] = v end
+  end
+  for i = 1, #stamps do
+    local t = stamps[i]
+    if type(t) == "number" and t > 1000000000 then
+      local age = time() - t
+      if age >= 0 then return age end
+    end
+  end
+  return atrAgeSecApi(itemID, link)
+end
+
 function GT.Prices.AtrIsFresh(itemID, link)
   local hours = (GoldTrackDB and GoldTrackDB.atrFreshHours) or 2
   local age = atrAgeSec(itemID, link)
@@ -278,7 +310,10 @@ function GT.Prices.AtrIsFresh(itemID, link)
 end
 
 function GT.Prices.Resolve(itemID, link)
-  local hit = cacheGet(itemID)
+  -- Key by full merge key (id:enchant:suffix) so item variants do not share
+  -- one cached entry; bare itemID only when no link is available.
+  local key = (type(link) == "string" and GT.MergeKey(link)) or itemID
+  local hit = cacheGet(key)
   if hit then return hit end
 
   local name, ilink, quality, ilvl, _, itemType, _, stackCount, _, texture, sellPrice, classID, subClass, bindType =
@@ -382,7 +417,7 @@ function GT.Prices.Resolve(itemID, link)
   local sr, ss = GT.Prices.GetSellRate(itemID, link)
   e.sellRate, e.sellRateSource = sr, ss
   e.soldPerDay = select(1, GT.Prices.GetSoldPerDay(itemID, link))
-  cachePut(itemID, e)
+  cachePut(key, e)
   return e
 end
 

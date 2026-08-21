@@ -187,55 +187,47 @@ function GT.SelfTest()
     commonAhMult = GoldTrackDB.commonAhMult,
     commonAhFlat = GoldTrackDB.commonAhFlat,
     ahMinSellRate = GoldTrackDB.ahMinSellRate,
+    ahValueMode = GoldTrackDB.ahValueMode,
+    subtractDeposit = GoldTrackDB.subtractDeposit,
   }
+  local savedCanDE = GT.CanDisenchant
   GoldTrackDB.ahMinVsVendor = 100000
   GoldTrackDB.ahMinVsDE = 100000
   GoldTrackDB.deMinVsVendor = 10000
   GoldTrackDB.commonAhMult = 3
   GoldTrackDB.commonAhFlat = 10000
-  GoldTrackDB.ahMinSellRate = 0 -- fixtures pass ahNet directly
+  GoldTrackDB.ahMinSellRate = 0
+  GoldTrackDB.ahValueMode = "if_sold"
+  GoldTrackDB.subtractDeposit = false
+  GT.CanDisenchant = function() return true end
 
+  -- Runs the REAL rule engine (GT.ValueItem) with injected prices, so the
+  -- fixtures cannot drift from production logic.
   for i = 1, #FIXTURES do
     local f = FIXTURES[i]
     local info = {
-      vendor = f.vendor, de = f.de, ahRaw = f.ahNet, -- ahRaw unused; we inject
+      vendor = f.vendor, de = f.de, ahRaw = f.ahNet,
       quality = f.q, bindType = f.bop and 1 or 0,
       stackCount = f.stack, isDEable = f.deable, isRecipe = f.recipe,
       name = f.n, itemID = 1,
+      sellRate = 1, sellRateSource = "tsm", -- bypass live sell-rate lookup
     }
-    -- bypass live AH: monkey by calling internals
-    local cfg = GoldTrackDB
-    local vendor, de, quality = f.vendor, f.de, f.q
-    local ahNet = f.ahNet
-    local method, unit
-    if quality == 0 then
-      method, unit = "VENDOR", vendor
-    elseif f.bop then
-      if de >= vendor + cfg.deMinVsVendor and de > 0 then method, unit = "DE", de
-      elseif vendor > 0 then method, unit = "VENDOR", vendor
-      else method, unit = "NONE", 0 end
-    else
-      local matTrack = (not f.deable) and (f.stack > 1 or f.recipe)
-      if matTrack then
-        if GT.MatBeatsVendor(ahNet, vendor) then method, unit = "AH", ahNet
-        else method, unit = "VENDOR", vendor end
-      else
-        local ahBetter = ahNet and (ahNet >= vendor + cfg.ahMinVsVendor) and (ahNet >= de + cfg.ahMinVsDE)
-        local deBetter = (de >= vendor + cfg.deMinVsVendor) and (not ahBetter) and de > 0
-        if ahBetter then method, unit = "AH", ahNet
-        elseif deBetter then method, unit = "DE", de
-        else method, unit = "VENDOR", vendor end
-      end
-    end
-    if method == f.want and unit == f.cop then
+    local val = GT.ValueItem(info, false)
+    -- AH rows net out the 5% cut inside ValueItem; derive expected from raw.
+    local wantCop = f.want == "AH"
+      and (f.ahNet - math.floor(f.ahNet * 0.05))
+      or f.cop
+    if val.method == f.want and val.unitCopper == wantCop then
       pass = pass + 1
     else
       fail = fail + 1
-      GT.Print(format("FAIL %s: got %s %d want %s %d", f.n, method, unit, f.want, f.cop))
+      GT.Print(format("FAIL %s: got %s %d want %s %d",
+        f.n, val.method, val.unitCopper or 0, f.want, wantCop))
     end
   end
 
   for k, v in pairs(saved) do GoldTrackDB[k] = v end
+  GT.CanDisenchant = savedCanDE
 
   local st = GT.Prices.status
   GT.Print(format("selftest %d pass / %d fail  TSM:%s Atr:%s/%s  enchanter:%s",

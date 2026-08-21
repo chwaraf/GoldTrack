@@ -35,8 +35,8 @@ local DE_REAGENT = {
 
 GT.DE_REAGENT = DE_REAGENT
 
-local function markDestroy(why)
-  destroyUntil = GetTime() + (GT.DESTROY_SUPPRESS or 5)
+local function markDestroy(why, dur)
+  destroyUntil = GetTime() + (dur or GT.DESTROY_SUPPRESS or 5)
   GT.Log("destroy suppress (%s)", why or "?")
 end
 
@@ -153,6 +153,23 @@ local function seen(key)
   if dedupI > n then dedupI = 1 end
   dedupKey[dedupI] = key
   dedupT[dedupI] = now
+  return false
+end
+
+-- Coin dedup: very short TTL so two real coin loots of the same size in quick
+-- succession both credit, while duplicate events for one loot do not.
+local mKey, mT, mI = {}, {}, 0
+local function seenMoney(copper)
+  local now = GetTime()
+  for i = 1, 8 do
+    if mKey[i] == copper and mT[i] and (now - mT[i]) < 0.3 then
+      return true
+    end
+  end
+  mI = mI + 1
+  if mI > 8 then mI = 1 end
+  mKey[mI] = copper
+  mT[mI] = now
   return false
 end
 
@@ -460,8 +477,7 @@ local function handleMoneyChat(msg)
     GT.Log("ignore money transfer")
     return
   end
-  local key = "gold:" .. copper .. ":" .. floor(now * 2)
-  if seen(key) then return end
+  if seenMoney(copper) then return end
   GT.Ledger.CreditGold(copper, isSplit and "split" or "loot")
 end
 
@@ -507,6 +523,33 @@ function GT.Events.OnSpellClassic(unit, spellName)
   -- we also listen for CLEU. This is last resort for gather names? skip.
 end
 
+-- Shared payload handling: classic fires (unit, spellName, rank), modern
+-- backports fire (unit, castGUID, spellID). Arm on START too so the window
+-- covers the cast itself for bar/macro/addon casts.
+local function handleSpellCast(event, unit, a, b, c)
+  if unit ~= "player" then return end
+  local spellId, spellName
+  if type(c) == "number" then
+    spellId = c
+  elseif type(a) == "number" then
+    spellId = a
+  elseif type(b) == "number" then
+    spellId = b
+  elseif type(a) == "string" then
+    spellName = a
+  end
+  local startDur = event == "UNIT_SPELLCAST_START" and GT.DESTROY_SUPPRESS_START or nil
+  if spellId == 13262 or spellId == 31252 then
+    markDestroy("spell " .. spellId, startDur)
+  elseif spellName then
+    deName = deName or GetSpellInfo(13262)
+    prospectName = prospectName or GetSpellInfo(31252)
+    if spellName == deName or spellName == prospectName then
+      markDestroy(spellName, startDur)
+    end
+  end
+end
+
 function GT.Events.Transfer(open)
   if open then
     transfer = transfer + 1
@@ -546,7 +589,7 @@ local function flushBags()
   for id, prev in pairs(beforeGear) do
     local now = farmGearQty[id] or 0
     if now < prev then
-      markDestroy("farmed gear left bags " .. id)
+      markDestroy("farmed gear left bags " .. id, GT.DESTROY_SUPPRESS_BAG)
       break
     end
   end
@@ -639,6 +682,7 @@ function GT.Events.SetListen(on)
       f:RegisterEvent("BAG_UPDATE")
     end
     f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    f:RegisterEvent("UNIT_SPELLCAST_START")
     f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     for ev in pairs(opens) do f:RegisterEvent(ev) end
     for ev in pairs(closes) do f:RegisterEvent(ev) end
@@ -667,23 +711,8 @@ function GT.Events.Init()
       GT.Events.OnLootClosed()
     elseif event == "BAG_UPDATE" or event == "BAG_UPDATE_DELAYED" then
       GT.Events.OnBag()
-    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-      local unit, a, b, c = ...
-      if unit ~= "player" then
-        -- skip
-      elseif type(c) == "number" then
-        GT.Events.OnSpell(unit, nil, c)
-      elseif type(a) == "number" then
-        GT.Events.OnSpell(unit, nil, a)
-      elseif type(b) == "number" then
-        GT.Events.OnSpell(unit, nil, b)
-      elseif type(a) == "string" then
-        deName = deName or GetSpellInfo(13262)
-        prospectName = prospectName or GetSpellInfo(31252)
-        if a == deName or a == prospectName then
-          markDestroy(a)
-        end
-      end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_START" then
+      handleSpellCast(event, ...)
     elseif event == "TRADE_SKILL_SHOW" then
       GT.Events.Transfer(true)
       if enchantingWindowOpen() or (GetTradeSkillLine and GetSpellInfo(7411) and GetTradeSkillLine() == GetSpellInfo(7411)) then

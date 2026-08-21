@@ -4,7 +4,9 @@ Session gold-per-hour tracker for client **2.5.5 / 2.5.6** (`## Interface: 20505
 
 Copy the `GoldTrack` folder to:
 
-`World of Warcraft/_classic_tbc_/Interface/AddOns/GoldTrack`
+`World of Warcraft/_anniversary_/Interface/AddOns/GoldTrack`
+
+(Older TBC Classic installs use `_classic_tbc_` instead.)
 
 Optional: **Auctionator** and/or **TradeSkillMaster**. Without them, only vendor prices are used. Region sell rates need the **TSM Desktop App + Anniversary AppHelper**, not just the in-game addon.
 
