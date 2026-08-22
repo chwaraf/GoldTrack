@@ -48,6 +48,7 @@ GT.defaults = {
   hudMinLevel = 70,
   showMinimap = true,
   hideHudInCombat = false,
+  hudCollapsed = false,
   hudPoint = nil, -- nil = under minimap
   uiRev = 2,
   mainPoint = { "CENTER", "UIParent", "CENTER", 0, 0 },
@@ -69,6 +70,7 @@ GT.defaults = {
   ahDepositPercent = 0.30,
   priceSource = "atr_fresh_tsm",
   atrFreshHours = 2,
+  ahOutlierCap = true,
 
   minGhSeconds = 30,
   pauseWhenAFK = true,

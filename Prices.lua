@@ -86,15 +86,18 @@ end
 local function atrAuction(itemID, link)
   if Auctionator and Auctionator.API and Auctionator.API.v1 then
     local api = Auctionator.API.v1
-    if api.GetAuctionPriceByItemID then
-      local ok, v = pcall(api.GetAuctionPriceByItemID, CALLER, itemID)
-      if ok and v and v > 0 then return v end
-    end
+    -- Exact-variant lookup first: ByItemID can match another random-enchant
+    -- variant of the same base item (tooltip shows one price, API another).
     if link and api.GetAuctionPriceByItemLink then
       local ok, v = pcall(api.GetAuctionPriceByItemLink, CALLER, link)
       if ok and v and v > 0 then return v end
     end
+    if api.GetAuctionPriceByItemID then
+      local ok, v = pcall(api.GetAuctionPriceByItemID, CALLER, itemID)
+      if ok and v and v > 0 then return v end
+    end
   end
+  -- Legacy: buyout = current lowest listing (not the scan-history average).
   if Atr_GetAuctionBuyout then
     local ok, v = pcall(Atr_GetAuctionBuyout, link or itemID)
     if ok and v and v > 0 then return v end
@@ -381,6 +384,17 @@ function GT.Prices.Resolve(itemID, link)
     end
   end
 
+  -- Outlier guard: an average built from one historic spike (or another item
+  -- variant) can sit far above every current listing. Cap the chosen raw at
+  -- 3x the best current-listing estimate when one exists.
+  if cfg.ahOutlierCap ~= false and ahRaw and ahRaw > 0 then
+    local recent = select(1, tsmByField("recent", itemID, link))
+    local current = firstPositive(minbuy, recent)
+    if current and ahRaw > current * 3 then
+      ahRaw, ahSource = current, (ahSource or "?") .. "+cap"
+    end
+  end
+
   local isDEable = (quality or 0) >= 2 and GT.IsArmorOrWeapon(classID, itemType)
   local de
   if isDEable then
@@ -419,6 +433,23 @@ function GT.Prices.Resolve(itemID, link)
   e.soldPerDay = select(1, GT.Prices.GetSoldPerDay(itemID, link))
   cachePut(key, e)
   return e
+end
+
+-- Diagnostics: every raw price source for one item, plus Auctionator freshness.
+function GT.Prices.DebugSources(itemID, link)
+  local name, ilink = GetItemInfo(link or itemID)
+  if not name then return nil end
+  link = ilink or link
+  local out = {}
+  out.minbuyout, out.minbuyoutTag = tsmByField("minbuyout", itemID, link)
+  out.recent, out.recentTag = tsmByField("recent", itemID, link)
+  out.market, out.marketTag = tsmByField("market", itemID, link)
+  out.historical, out.historicalTag = tsmByField("historical", itemID, link)
+  out.regionsaleavg, out.regionsaleavgTag = tsmByField("regionsaleavg", itemID, link)
+  out.atr = atrAuction(itemID, link)
+  local fresh, age = GT.Prices.AtrIsFresh(itemID, link)
+  out.atrFresh, out.atrAgeSec = fresh, age
+  return out
 end
 
 function GT.Prices.Probe()

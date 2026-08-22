@@ -11,6 +11,49 @@ local lootHideZero = false
 local lootFilter = ""
 local currentTab = "session"
 
+-- Value inspector ------------------------------------------------------------
+-- Prints every price source + the final valuation for one item to chat.
+function GT.UI.PrintValuation(link)
+  local itemID = GT.ParseItemID(link)
+  if not itemID then return end
+  local info = GT.Prices.Resolve(itemID, link)
+  if not info then
+    GT.Print("|cffff6060Item data not loaded yet - hover the item once, then click again.|r")
+    return
+  end
+  info.itemID = itemID
+  local d = GT.Prices.DebugSources(itemID, link) or {}
+  local soulbound = (info.bindType or 0) == 1
+  local val = GT.ValueItem(info, soulbound)
+  local F = GT.FormatCopper
+  local fl = math.floor
+  GT.Print(("Value %s"):format(link))
+  GT.Print(("  vendor=%s  DE=%s  q%d  bind=%d  stack=%d"):format(
+    F(info.vendor or 0), F(info.de or 0), info.quality or 0,
+    info.bindType or 0, info.stackCount or 1))
+  GT.Print(("  TSM minbuyout=%s  recent=%s  market=%s  hist=%s  saleAvg=%s"):format(
+    F(d.minbuyout or 0), F(d.recent or 0), F(d.market or 0),
+    F(d.historical or 0), F(d.regionsaleavg or 0)))
+  local ageTxt = "?"
+  if d.atrAgeSec then
+    local m = fl(d.atrAgeSec / 60)
+    ageTxt = m >= 60 and format("%dh", fl(m / 60)) or format("%dm", m)
+  end
+  GT.Print(("  Auctionator=%s  fresh=%s  age=%s"):format(
+    F(d.atr or 0), tostring(d.atrFresh == true), ageTxt))
+  GT.Print(("  AHraw=%s src=%s [priceSource=%s, tsmField=%s]"):format(
+    F(info.ahRaw or 0), info.ahSource or "-",
+    GoldTrackDB.priceSource or "-", GoldTrackDB.tsmPriceField or "-"))
+  GT.Print(("  sellRate=%.0f%% (%s)%s  mode=%s  cut=%s  dep=%s  lostDep=%s  AHnet=%s"):format(
+    (val.sellRate or 0) * 100, val.sellRateSource or "-",
+    info.soldPerDay and format("  sold/day=%.2f", info.soldPerDay) or "",
+    val.ahMode or "-", F(val.cut or 0), F(val.deposit or 0),
+    F(val.expectedLostDep or 0), F(val.ahNet or 0)))
+  GT.Print(("  => |cffffff60%s %s|r  (%s)"):format(
+    val.method or "?", F(val.unitCopper or 0), val.why or ""))
+end
+
+
 local TAB_IDS = { "total", "session", "loot", "config" }
 local TAB_LABEL = { total = "Total", session = "Session", loot = "Loot", config = "Config" }
 local TAB_TIP = {
@@ -346,6 +389,39 @@ function GT.UI.BuildMain()
     cb:SetScript("OnClick", function(self)
       lootHideZero = self:GetChecked()
       GT.UI.UpdateLoot()
+    end)
+
+    -- Value inspector drop target: drag an item from your bags onto it.
+    local ib = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+    ib:SetSize(58, 20)
+    ib:SetPoint("LEFT", cbl, "RIGHT", 12, -1)
+    ib:SetText("Value")
+    local function dropHandler(self)
+      if not CursorHasItem() then return end
+      -- GetCursorItem is retail-only; GetCursorInfo is classic-safe.
+      local ctype, _, itemLink = GetCursorInfo()
+      ClearCursor()
+      if ctype == "item" and itemLink then
+        GT.UI.PrintValuation(itemLink)
+      end
+    end
+    ib:SetScript("OnReceiveDrag", dropHandler)
+    ib:SetScript("OnMouseUp", function(self)
+      -- Some drops on buttons only fire MouseUp; CursorHasItem guards
+      -- against double-printing when OnReceiveDrag already handled it.
+      dropHandler(self)
+    end)
+    ib:SetScript("OnEnter", function(self)
+      if CursorHasItem() then self:LockHighlight() end
+      tipW(self, function(tt)
+        tt:AddLine("Value inspector", 1, 0.82, 0)
+        tt:AddLine("Drag an item from your bags onto this button to print every price source and the final valuation to chat.",
+          0.8, 0.8, 0.8, true)
+      end)
+    end)
+    ib:SetScript("OnLeave", function(self)
+      self:UnlockHighlight()
+      GameTooltip:Hide()
     end)
 
     local hm = CreateFrame("Button", nil, p)

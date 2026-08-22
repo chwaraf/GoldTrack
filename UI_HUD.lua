@@ -4,7 +4,8 @@ local abs, floor, format = math.abs, math.floor, string.format
 
 GT.UI = GT.UI or {}
 
-local hud, pauseBtn, resetBtn
+local hud, pauseBtn, resetBtn, mini
+local miniText -- fwd decl (used by pulse while collapsed)
 local acc = 0
 
 local BD = {
@@ -73,9 +74,10 @@ local function fmtTime(ms)
   return format("%d:%02d", m, s)
 end
 
-function GT.UI.SaveHUDPoint()
-  local a, rel, b, x, y = hud:GetPoint(1)
-  GoldTrackDB.hudPoint = { a, rel and rel:GetName() or "UIParent", b, x, y }
+function GT.UI.SaveHUDPoint(frame, key)
+  local f = frame or hud
+  local a, rel, b, x, y = f:GetPoint(1)
+  GoldTrackDB[key or "hudPoint"] = { a, rel and rel:GetName() or "UIParent", b, x, y }
 end
 
 local function setText(fs, t)
@@ -85,7 +87,12 @@ local function setText(fs, t)
 end
 
 function GT.UI.HUDShouldPulse()
-  if not hud or not hud:IsShown() then return false end
+  if not hud then return false end
+  if GoldTrackDB.hudCollapsed then
+    if not (mini and mini:IsShown()) then return false end
+  elseif not hud:IsShown() then
+    return false
+  end
   local s = GoldTrackCharDB and GoldTrackCharDB.session
   if s and s.state == "RUNNING" then return true end
   local _, _, left = GT.HourlyLockout()
@@ -95,6 +102,33 @@ end
 function GT.UI.SetHUDPulse()
   if not hud then return end
   local on = GT.UI.HUDShouldPulse()
+
+  -- Collapsed: the square mini button carries the refresh pulse instead.
+  if GoldTrackDB.hudCollapsed then
+    if hud._pulse then
+      hud._pulse = false
+      hud:SetScript("OnUpdate", nil)
+    end
+    if mini and on and not mini._pulse then
+      mini._pulse = true
+      acc = 0
+      mini:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + elapsed
+        if acc < (GT.HUD_INTERVAL or 1) then return end
+        acc = 0
+        miniText()
+      end)
+    elseif mini and mini._pulse and not on then
+      mini._pulse = false
+      mini:SetScript("OnUpdate", nil)
+    end
+    return
+  end
+
+  if mini and mini._pulse then
+    mini._pulse = false
+    mini:SetScript("OnUpdate", nil)
+  end
   if on then
     if not hud._pulse then
       hud._pulse = true
@@ -112,7 +146,64 @@ function GT.UI.SetHUDPulse()
   end
 end
 
+-- Whole-digit gold/hour for the collapsed square button.
+function miniText()
+  if not mini or not mini:IsShown() then return end
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if not s then return end
+  local ms = GT.NowMs()
+  local t
+  if s.state == "RUNNING" and not GT.afkPaused then
+    local ghCop = GT.GPerHour(s.copper or 0, ms)
+    if ghCop == nil then
+      local minSec = (GoldTrackDB and GoldTrackDB.minGhSeconds) or 30
+      local left = math.ceil(minSec - (ms or 0) / 1000)
+      if left < 0 then left = 0 end
+      t = tostring(left) .. "s"
+    else
+      t = commaNum(copperGold(ghCop), 0)
+    end
+  elseif GT.afkPaused or s.startedAt then
+    t = "P" -- paused: clock folded, session kept
+  else
+    t = "S" -- not started: fresh or just reset
+  end
+  setText(mini.text, t)
+  -- Shrink until it fits inside the square (min readable size).
+  local fp = fontPath()
+  local size = floor(mini:GetHeight() * 0.42) -- scales with the square
+  mini.text:SetFont(fp, size, "OUTLINE")
+  while size > 6 and mini.text:GetStringWidth() > mini:GetWidth() - 4 do
+    size = size - 1
+    mini.text:SetFont(fp, size, "OUTLINE")
+  end
+end
+
+function GT.UI.ToggleHUDCollapsed()
+  if not hud or not mini then return end
+  if not GoldTrackDB.hudCollapsed then
+    -- Collapse onto the middle of the Start/Pause bar's last position.
+    if hud:IsShown() and pauseBtn then
+      local sc = hud:GetEffectiveScale() / UIParent:GetEffectiveScale()
+      local cx, cy = pauseBtn:GetCenter() -- parent space, origin BOTTOMLEFT
+      if cx and cy then
+        GoldTrackDB.miniPoint =
+          { "CENTER", "UIParent", "BOTTOMLEFT", cx * sc, cy * sc }
+      end
+    end
+  end
+  GoldTrackDB.hudCollapsed = not GoldTrackDB.hudCollapsed
+  GT.UI.ApplyHUDVisibility()
+  if not GoldTrackDB.hudCollapsed then
+    GT.UI.UpdateHUD() -- refresh labels that froze while collapsed
+  end
+end
+
 function GT.UI.UpdateHUD()
+  if GoldTrackDB.hudCollapsed then
+    miniText()
+    return
+  end
   if not hud or not hud:IsShown() then return end
   local s = GoldTrackCharDB and GoldTrackCharDB.session
   if not s then return end
@@ -176,21 +267,33 @@ end
 
 function GT.UI.ApplyHUDVisibility()
   if not hud then return end
+  local visible = true
   if not GoldTrackDB.showHUD then
-    hud:Hide()
-    GT.UI.SetHUDPulse()
-    return
-  end
-  if GoldTrackDB.hudMinLevelOn ~= false then
+    visible = false
+  elseif GoldTrackDB.hudMinLevelOn ~= false then
     local need = GoldTrackDB.hudMinLevel or 70
     local lvl = UnitLevel and UnitLevel("player") or 1
-    if lvl < need then
+    if lvl < need then visible = false end
+  end
+
+  if GoldTrackDB.hudCollapsed and mini then
+    hud:Hide()
+    if visible then
+      applyPoint(mini, GoldTrackDB.miniPoint or GoldTrackDB.hudPoint)
+      mini:SetScale(GoldTrackDB.hudScale or 1)
+      mini:Show()
+      miniText()
+    else
+      mini:Hide()
+    end
+  else
+    if mini then mini:Hide() end
+    if visible then
+      hud:Show()
+    else
       hud:Hide()
-      GT.UI.SetHUDPulse()
-      return
     end
   end
-  hud:Show()
   GT.UI.SetHUDPulse()
 end
 
@@ -375,7 +478,12 @@ function GT.UI.BuildHUD()
   pauseBtn:SetPoint("BOTTOMLEFT", hud, "BOTTOMLEFT", 4, 5)
   pauseBtn:SetPoint("BOTTOMRIGHT", hud, "BOTTOMRIGHT", -4, 5)
   pauseBtn:SetText("Start")
-  pauseBtn:SetScript("OnClick", function()
+  pauseBtn:RegisterForClicks("AnyUp")
+  pauseBtn:SetScript("OnClick", function(_, btn)
+    if btn == "RightButton" then
+      GT.UI.ToggleHUDCollapsed() -- collapse HUD to the gold/h square
+      return
+    end
     local s = GoldTrackCharDB.session
     if s.state == "RUNNING" and not GT.afkPaused then
       GT.SessionStop()
@@ -396,6 +504,7 @@ function GT.UI.BuildHUD()
       tt:AddLine("Run the session clock and count world-loot value from now on.",
         0.8, 0.8, 0.8, true)
     end
+    tt:AddLine("Right-click: collapse the HUD to a gold/h square.", 0.55, 0.55, 0.55, true)
   end)
 
   resetBtn = CreateFrame("Button", nil, hud, "UIPanelButtonTemplate")
@@ -406,6 +515,65 @@ function GT.UI.BuildHUD()
     StaticPopup_Show("GOLDTRACK_RESET")
   end)
   attachTip(resetBtn, "Archive this session into Total, then clear it. Asks to confirm.")
+
+  -- Collapsed square: side = 2x Start/Pause button height. Same button chrome
+  -- as Start but tinted red (so it reads as a button, not stray text). Shows
+  -- gold/h (whole digits). Right-click expands back to the full HUD.
+  mini = CreateFrame("Button", "GoldTrackHUDMini", UIParent, "UIPanelButtonTemplate")
+  local mside = (pauseBtn:GetHeight() or 29) * 2
+  mini:SetSize(mside, mside)
+  mini:SetFrameStrata("MEDIUM")
+  mini:SetMovable(true)
+  mini:EnableMouse(true)
+  mini:RegisterForDrag("LeftButton")
+  mini:SetClampedToScreen(true)
+  do -- red tint on the panel-button textures (border stays from the template)
+    local nt = mini:GetNormalTexture()
+    if nt then nt:SetVertexColor(0.75, 0.12, 0.12) end
+    local pt = mini:GetPushedTexture()
+    if pt then pt:SetVertexColor(0.55, 0.08, 0.08) end
+    local ht = mini:GetHighlightTexture()
+    if ht then ht:SetVertexColor(1, 0.55, 0.55) end
+  end
+  applyPoint(mini, GoldTrackDB.miniPoint or GoldTrackDB.hudPoint)
+  mini:SetScale(GoldTrackDB.hudScale or 1)
+  mini:Hide()
+
+  mini.text = mini:CreateFontString(nil, "OVERLAY")
+  mini.text:SetFont(fontPath(), 10, "OUTLINE")
+  mini.text:SetPoint("CENTER")
+  mini.text:SetTextColor(1, 0.820, 0)
+  mini.text:SetJustifyH("CENTER")
+  mini.text:SetWordWrap(false)
+  mini.text:SetText("-")
+
+  mini:RegisterForClicks("AnyUp")
+  mini:SetScript("OnClick", function(_, btn)
+    if btn == "RightButton" then
+      GT.UI.ToggleHUDCollapsed() -- restore the full HUD
+      return
+    end
+    local s = GoldTrackCharDB.session
+    if s.state == "RUNNING" and not GT.afkPaused then
+      GT.SessionStop()
+    else
+      GT.SessionStart()
+    end
+  end)
+  mini:SetScript("OnDragStart", function(self)
+    if GoldTrackDB.hudLocked then return end
+    self:StartMoving()
+  end)
+  mini:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    GT.UI.SaveHUDPoint(self, "miniPoint") -- keep the full HUD's own anchor
+  end)
+  attachTip(mini, function(tt)
+    tt:AddLine("Gold per hour (collapsed HUD)", 1, 0.82, 0)
+    tt:AddLine("P = paused   S = not started", 0.72, 0.72, 0.72)
+    tt:AddLine("Left-click: Start / Pause the session.", 0.8, 0.8, 0.8, true)
+    tt:AddLine("Right-click: restore the full HUD.", 0.8, 0.8, 0.8, true)
+  end)
 
   -- Same 4px gap above Start as Reset uses.
   local gpmLab = makeLabel(hud, "G/m", 10)
@@ -552,4 +720,5 @@ end
 
 function GT.UI.SetHUDScale(sc)
   if hud then hud:SetScale(sc) end
+  if mini then mini:SetScale(sc) end
 end
