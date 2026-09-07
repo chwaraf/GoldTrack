@@ -6,7 +6,7 @@ local GetTime, time, floor = GetTime, time, math.floor
 local UnitIsAFK = UnitIsAFK
 
 GT.ADDON = "GoldTrack"
-GT.VERSION = "1.0.0"
+GT.VERSION = "1.1.0" -- authoritative; Version.lua also sets/keeps this in sync
 
 -- Caps (memory)
 GT.PRICE_CACHE_TTL = 30
@@ -323,6 +323,9 @@ function GT.OnAddonLoaded()
     GoldTrackDB.cfgRev = 3
   end
 
+  -- Detect client and apply/switch per-version economy defaults.
+  if GT.ApplyGameVersion then GT.ApplyGameVersion() end
+
   -- never persist GetTime
   GT.segmentStart = nil
   GT.afkPaused = false
@@ -386,6 +389,10 @@ SlashCmdList.GOLDTRACK = function(msg)
     StaticPopup_Show("GOLDTRACK_RESET")
   elseif msg == "config" then
     if GT.UI then GT.UI.ShowTab("config") end
+  elseif msg == "version" then
+    GT.Print(GT.VersionSummary())
+  elseif msg == "reseteconomy" then
+    GT.ResetEconomy()
   elseif msg == "refresh" then
     GT.RefreshTSMRows(false)
   elseif msg == "stripde" then
@@ -397,7 +404,7 @@ SlashCmdList.GOLDTRACK = function(msg)
     GT.debug = not GT.debug
     GT.Print("debug " .. (GT.debug and "on" or "off"))
   else
-    GT.Print("/gt  /gt hud  /gt start|stop  /gt reset  /gt refresh  /gt config  /gt selftest  /gt debug")
+    GT.Print("/gt  /gt hud  /gt start|stop  /gt reset  /gt refresh  /gt config  /gt version  /gt selftest  /gt debug")
   end
 end
 

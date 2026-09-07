@@ -128,45 +128,76 @@ function GT.UI.BuildConfig(p)
   local y = -4
   local c
 
+  -- Client-aware header: show the detected client and a one-click reset of the
+  -- valuation thresholds to that client's "gold resolution". This is the knob
+  -- that makes Era vs TBC behave differently (Era is ~5-10x smaller).
+  y = header(child, y, "Client")
+  do
+    local r, ny = row(child, y)
+    local lab = r:CreateFontString(nil, "OVERLAY")
+    lab:SetFont((STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"), 13, "")
+    lab:SetPoint("RIGHT", r.dash, "LEFT", -8, 0)
+    lab:SetJustifyH("RIGHT")
+    lab:SetWordWrap(false)
+    lab:SetText("Client")
+    lab:SetTextColor(0.722, 0.722, 0.722)
+    local val = r:CreateFontString(nil, "OVERLAY")
+    val:SetFont((STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"), 13, "")
+    val:SetPoint("LEFT", r.dash, "RIGHT", 8, 0)
+    val:SetJustifyH("LEFT")
+    val:SetWordWrap(false)
+    val:SetText(GT.GameVersionLabel() .. "  (max level " .. GT.GameMaxLevel() .. ")")
+    val:SetTextColor(1, 1, 1)
+    y = ny
+    local rb = CreateFrame("Button", nil, child, "UIPanelButtonTemplate")
+    rb:SetSize(210, 20)
+    rb:SetPoint("TOPLEFT", 8, y - 2)
+    rb:SetText("Reset thresholds to " .. GT.GameVersionLabel())
+    rb:SetScript("OnClick", function() GT.ResetEconomy() end)
+    tipOn(rb, "Set the valuation gold thresholds below back to this client's defaults. Classic Era uses much smaller values (~5-10x) than TBC, so this is what makes the addon behave correctly on each version.")
+    y = y - 24
+  end
+  y = y - 6
+
   y = header(child, y, "Valuation")
   c, y = edit(child, y, "Gear: AH beats vendor by (g)",
     function() return GT.FmtNumber(GT.CopperToGold(GoldTrackDB.ahMinVsVendor)) end,
-    function(t) GoldTrackDB.ahMinVsVendor = GT.GoldToCopper(t) end,
-    "DE-able gear only. Default 10g. Decimals ok (8.5 or 8,5).")
+    function(t) GT.SetEconomy("ahMinVsVendor", GT.GoldToCopper(t)) end,
+    "DE-able gear only. TBC default 10g, Era default 1g. Decimals ok (8.5 or 8,5).")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Gear: AH beats DE by (g)",
     function() return GT.FmtNumber(GT.CopperToGold(GoldTrackDB.ahMinVsDE)) end,
-    function(t) GoldTrackDB.ahMinVsDE = GT.GoldToCopper(t) end,
-    "AH must also beat disenchant by this much. Default 8g.")
+    function(t) GT.SetEconomy("ahMinVsDE", GT.GoldToCopper(t)) end,
+    "AH must also beat disenchant by this much. TBC default 8g, Era default 1g.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "DE beats vendor by (g)",
     function() return GT.FmtNumber(GT.CopperToGold(GoldTrackDB.deMinVsVendor)) end,
-    function(t) GoldTrackDB.deMinVsVendor = GT.GoldToCopper(t) end,
-    "BoP gear and gear fallback path. Default 1g.")
+    function(t) GT.SetEconomy("deMinVsVendor", GT.GoldToCopper(t)) end,
+    "BoP gear and gear fallback path. TBC default 1g, Era default 10s.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Mats: AH >= vendor x",
     function() return GT.FmtNumber(GoldTrackDB.commonAhMult) end,
-    function(t) GoldTrackDB.commonAhMult = GT.ParseNumber(t) or 3 end,
+    function(t) GT.SetEconomy("commonAhMult", GT.ParseNumber(t) or 3) end,
     "Stackables and recipes. Default 3. Decimals ok.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Mats: or vendor + (g)",
     function() return GT.FmtNumber(GT.CopperToGold(GoldTrackDB.commonAhFlat)) end,
-    function(t) GoldTrackDB.commonAhFlat = GT.GoldToCopper(t) end,
-    "If vendor is 0, only this test is used. Default 1g.")
+    function(t) GT.SetEconomy("commonAhFlat", GT.GoldToCopper(t)) end,
+    "If vendor is 0, only this test is used. TBC default 1g, Era default 10s.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Min sell rate (0-1)",
     function() return GT.FmtNumber(GoldTrackDB.ahMinSellRate) end,
-    function(t) GoldTrackDB.ahMinSellRate = GT.ParseNumber(t) or 0.1 end,
+    function(t) GT.SetEconomy("ahMinSellRate", GT.ParseNumber(t) or 0.1) end,
     "Below this, AH is skipped. Auctionator has no sell rate.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "Fallback sell rate",
     function() return GT.FmtNumber(GoldTrackDB.ahUnknownSellRate) end,
-    function(t) GoldTrackDB.ahUnknownSellRate = GT.ParseNumber(t) or 0.5 end,
+    function(t) GT.SetEconomy("ahUnknownSellRate", GT.ParseNumber(t) or 0.5) end,
     "Used when TSM has no DBRegionSaleRate.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Subtract expected AH deposit",
     function() return GoldTrackDB.subtractDeposit end,
-    function(v) GoldTrackDB.subtractDeposit = v end,
+    function(v) GT.SetEconomy("subtractDeposit", v) end,
     "Deposit comes back if it sells. We subtract deposit x (1 - sell rate).")
   p.ctrls[#p.ctrls + 1] = c
 
@@ -215,7 +246,7 @@ function GT.UI.BuildConfig(p)
       { "expected_relist", "Relist until sold" },
     },
     function() return GoldTrackDB.ahValueMode end,
-    function(v) GoldTrackDB.ahValueMode = v end,
+    function(v) GT.SetEconomy("ahValueMode", v) end,
     "If sold: raw minus cut and expected lost deposit (default). One-post EV also multiplies payout by sell rate. Relist spreads lost deposit across attempts until sold.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = cycle(child, y, "Deposit preset", {
@@ -226,7 +257,7 @@ function GT.UI.BuildConfig(p)
       { "custom", "Custom" },
     },
     function() return GoldTrackDB.ahDepositPreset end,
-    function(v) GoldTrackDB.ahDepositPreset = v end,
+    function(v) GT.SetEconomy("ahDepositPreset", v) end,
     "Expected AH deposit = vendor sell price x percent (24h / 30% default). Ignore disables subtraction; Custom keeps the stored percent.")
   p.ctrls[#p.ctrls + 1] = c
 
@@ -286,10 +317,10 @@ function GT.UI.BuildConfig(p)
   c, y = edit(child, y, "HUD min level value",
     function() return GT.FmtNumber(GoldTrackDB.hudMinLevel or 70) end,
     function(t)
-      GoldTrackDB.hudMinLevel = math.floor(GT.ParseNumber(t) or 70)
+      GT.SetEconomy("hudMinLevel", math.floor(GT.ParseNumber(t) or 70))
       GT.UI.ApplyHUDVisibility()
     end,
-    "Default 70. HUD stays hidden until you reach this level.")
+    "HUD stays hidden until you reach this level. TBC default 70, Era default 60.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Lock HUD",
     function() return GoldTrackDB.hudLocked end,
@@ -299,9 +330,14 @@ function GT.UI.BuildConfig(p)
 
   child:SetHeight(-y + 16)
 
-  p:SetScript("OnShow", function()
+  -- Public refresh so /gt reseteconomy and the reset button can repaint fields.
+  GT.UI.RefreshConfig = function()
     for i = 1, #p.ctrls do
       if p.ctrls[i]._refresh then p.ctrls[i]._refresh() end
     end
+  end
+
+  p:SetScript("OnShow", function()
+    GT.UI.RefreshConfig()
   end)
 end

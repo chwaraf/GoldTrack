@@ -1,13 +1,14 @@
-## Interface: 20505,20506
+## Interface: 20505, 20506, 11507, 11508, 11509
 ## Title: GoldTrack
-## Notes: Session gold/hour tracker for TBC Anniversary
+## Notes: Session gold/hour tracker (Classic Era & TBC Anniversary)
 ## Author: GoldTrack
-## Version: 1.0.0
+## Version: 1.1.0
 ## OptionalDeps: Auctionator, TradeSkillMaster, NovaInstanceTracker
 ## SavedVariables: GoldTrackDB
 ## SavedVariablesPerCharacter: GoldTrackCharDB
 
 Core.lua
+Version.lua
 Money.lua
 Prices.lua
 Valuation.lua

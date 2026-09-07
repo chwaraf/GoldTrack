@@ -1,12 +1,13 @@
-# GoldTrack — TBC Classic Anniversary
+# GoldTrack — Classic Era & TBC Anniversary
 
-Session gold-per-hour tracker for client **2.5.5 / 2.5.6** (`## Interface: 20505,20506`).
+Session gold-per-hour tracker for **Classic Era (1.15.x)** and **TBC Anniversary (2.5.5 / 2.5.6)**, from a single package. `## Interface: 20505, 20506, 11507, 11508, 11509`.
 
-Copy the `GoldTrack` folder to:
+Copy the `GoldTrack` folder to the client's addons directory:
 
-`World of Warcraft/_anniversary_/Interface/AddOns/GoldTrack`
+- TBC Anniversary: `World of Warcraft/_anniversary_/Interface/AddOns/GoldTrack`
+- Classic Era: `World of Warcraft/_classic_era_/Interface/AddOns/GoldTrack`
 
-(Older TBC Classic installs use `_classic_tbc_` instead.)
+The addon auto-detects which client it is running on (`WOW_PROJECT_ID`, falling back to the interface number) and applies the right economy defaults for that client (see **Client profiles** below).
 
 Optional: **Auctionator** and/or **TradeSkillMaster**. Without them, only vendor prices are used. Region sell rates need the **TSM Desktop App + Anniversary AppHelper**, not just the in-game addon.
 
@@ -21,6 +22,22 @@ Estimated **disposition value of world loot**, frozen at the moment of loot. It 
 Wrong g/h is worse than none. Credits come from classified chat loot only. Bags are used only for OPEN/DE transforms (clams, etc.).
 
 Vendoring, mailing, trading, AH payouts, and disenchanting already-looted gear do **not** add a second credit.
+
+## Client profiles
+
+GoldTrack behaves differently per client because the **gold resolution** differs. Classic Era prices are roughly 5–10× smaller than TBC, so the valuation thresholds ("does AH beat vendor by X?", "does DE beat vendor by X?") must be much smaller on Era or nothing ever routes to AH/DE.
+
+The detected client is shown at the top of the Config tab. When the client changes, GoldTrack swaps in that client's defaults **and remembers your own per-client tweaks**, so a tuned Era setup isn't overwritten by logging into TBC and vice versa. A "Reset thresholds to <client>" button (or `/gt reseteconomy`) restores the detected client's defaults.
+
+| | TBC / Anniversary | Classic Era |
+| --- | --- | --- |
+| AH beats vendor by | 10g | 1g |
+| AH beats DE by | 8g | 1g |
+| DE beats vendor by | 1g | 10s |
+| Mats: or vendor + | 1g | 10s |
+| HUD min level | 70 | 60 |
+
+`/gt version` prints the detected client and max level. Future clients (WotLK, Cata, Mists) are detected and default to keeping current values until tuned.
 
 ---
 
@@ -68,6 +85,8 @@ Session health line: colored **TSM / Auctionator / NIT** yes/no plus muted sellr
 | `/gt start` / `/gt stop` | Session clock |
 | `/gt reset` | Archive + clear (confirm) |
 | `/gt config` | Config tab |
+| `/gt version` | Print detected client, max level |
+| `/gt reseteconomy` | Reset valuation thresholds to this client's defaults |
 | `/gt refresh` | Re-read TSM sell rate / sold-per-day on **current** session rows (does not rewrite gold or method) |
 | `/gt stripde` | Remove DE/prospect reagent rows from **current** session |
 | `/gt selftest` | Valuation fixtures + TSM probe (`itemID 21877` netherweave) |
@@ -142,7 +161,9 @@ Sell rate: `DBRegionSaleRate` (0 is valid). Auctionator has no sell-rate API.
 
 ## Config defaults
 
-| Key | Default |
+The valuation gold thresholds are **per client** (see **Client profiles** above); the table below shows the TBC/Anniversary values. All numeric fields accept decimals (`8.5` or `8,5`).
+
+| Key | Default (TBC) |
 | --- | --- |
 | Gear: AH beats vendor by | 10g |
 | Gear: AH beats DE by | 8g |

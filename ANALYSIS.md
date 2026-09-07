@@ -26,6 +26,7 @@ This is deliberate: "wrong g/h is worse than none." The value shown is what the 
 | --- | --- | --- |
 | `GoldTrack.toc` | Load order, interface, `SavedVariables` | — |
 | `Core.lua` | Namespace `GT`, defaults, session state machine, clock, slash, keybinds, reset/wipe popups | Reads/writes `GoldTrackDB` + `GoldTrackCharDB` |
+| `Version.lua` | Client detection, per-client economy profiles, version-snapshot/apply | `GoldTrackDB.gameVersion/phresholdPresets` |
 | `Money.lua` | Coins parse/format, `GPerHour`, elapsed/number formatting | — |
 | `Prices.lua` | Price resolution (Auctionator/TSM/vendor), sell rate, cache | — |
 | `Valuation.lua` | Rule engine: pick AH/DE/VENDOR/NONE from a resolved item | — |
@@ -72,6 +73,26 @@ Event-driven, no combat-log parsing. Registered only while a session is live (`S
 That last one (3) only fires for gear that is already in the session rows (`sessionGearIDs`). Any gear DE'd that was **not** counted in this session (carried over a relog, or from a previous session) is covered only by (1). That's why the spell-cast handler mattered so much (see §6).
 
 ---
+
+## 5b. Client-version layer (`Version.lua`)
+
+GoldTrack now runs on more than one client (Classic Era + TBC Anniversary, more later). The one thing that genuinely differs per client is the **economy "resolution"**: Era prices are roughly 5–10× smaller than TBC, so the valuation thresholds ("AH beats vendor by X", "DE beats vendor by X") must differ or the addon is useless on Era.
+
+How it works:
+
+- `GT.DetectGameVersion()` prefers `WOW_PROJECT_ID` (2=Era, 5=TBC, 11=WotLK, 14=Cata, 19=Mists, 1=Retail) and falls back to the interface number from `GetBuildInfo()`. It uses numeric literals, not the `WOW_PROJECT_*` globals, because a given client may not define every constant.
+- `GT.VERSION_PROFILES` holds per-client economy defaults. `tbc` is exactly the old GoldTrack defaults; `era` is ~1/10th (1g/10s vs 10g/1g); future clients are stubs (no override → keep current values) until tuned.
+- `GT.EconomyKeys` = the set of fields that are version-coupled. Only these change when the client changes; UI, price source, and sell-rate behavior stay where the user put them.
+- `GT.ApplyGameVersion()` runs at `ADDON_LOADED`. On a version change it snapshots the outgoing client's values into `GoldTrackDB.thresholdPresets[old]`, loads the incoming client's own preset (or its defaults), and records `gameVersion`. This means a tuned TBC setup and a tuned Era setup are remembered independently. Compatibility: a DB with no `gameVersionKnown` (first run under this feature) adopts the detected client's defaults only if the stored values still equal the old TBC defaults (so upgrading on Era swaps to Era values, while a customized setup is never clobbered).
+- `GT.SetEconomy(key, val)` is the write path for any `EconomyKey` (use it instead of assigning `GoldTrackDB` directly) so the per-client record stays in sync.
+- Config shows the detected client + a `Reset thresholds to <client>` button (`GT.ResetEconomy` / `/gt reseteconomy`). `/gt version` prints a summary.
+
+### Version-specific concerns to watch (not yet handled)
+- **NIT / hourly lockout:** `NovaInstanceTracker` is TBC-oriented. On Era `_G.NIT` is nil → the HUD hourly count shows `-`. That is safe, but if you later want lockout on Era you'd need an Era NIT or a different source.
+- **Spell IDs for DE/prospect:** `13262` (Disenchant) and `31252` (Prospect) are fine on both; Era has no prospecting so `31252` simply never fires. Gather-spell IDs are the same.
+- **`UNIT_SPELLCAST_*` payload** already handles both the TBC backport `(unit, castGUID, spellID)` and legacy `(unit, spellName, rank, ...)` forms (see §6).
+- **Bag/C_Container:** guarded twice (`C_Container` may exist but be partially backported on some Era builds); `GetContainerItemInfo` fallback is in place.
+- **Item link format / `GetItemInfo` order:** the modern order (sellPrice @11, classID @12) is used; it holds on both Era and TBC. If a future client changes it, revisit `Prices.Resolve`.
 
 ## 5. Valuation invariants (`Valuation.lua`)
 
