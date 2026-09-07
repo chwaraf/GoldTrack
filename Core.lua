@@ -377,8 +377,12 @@ SlashCmdList.GOLDTRACK = function(msg)
   if msg == "" then
     if GT.UI then GT.UI.ToggleMain() end
   elseif msg == "hud" then
-    GoldTrackDB.showHUD = not GoldTrackDB.showHUD
-    if GT.UI then GT.UI.ApplyHUDVisibility() end
+    -- Toggle; when turning ON, force past the min-level auto-hide so an
+    -- explicit request always shows the HUD (even a low-level alt or a stale
+    -- TBC hudMinLevel on Classic Era).
+    local target = not GoldTrackDB.showHUD
+    GoldTrackDB.showHUD = target
+    if GT.UI then GT.UI.ApplyHUDVisibility(target) end
   elseif msg == "start" then
     GT.SessionStart()
     GT.Print("session started")

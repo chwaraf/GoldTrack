@@ -337,12 +337,16 @@ function GT.UI.UpdateHUD()
   GT.UI.SetHUDPulse()
 end
 
-function GT.UI.ApplyHUDVisibility()
+function GT.UI.ApplyHUDVisibility(force)
   if not hud then return end
   local visible = true
   if not GoldTrackDB.showHUD then
     visible = false
-  elseif GoldTrackDB.hudMinLevelOn ~= false then
+  elseif not force and GoldTrackDB.hudMinLevelOn ~= false then
+    -- Auto-hide below the configured min level. An explicit user action (the
+    -- /gt hud toggle, the HUD right-click "Show HUD", the config checkbox)
+    -- passes force=true so it ALWAYS shows, even on a low-level character or
+    -- when a stale TBC hudMinLevel (70) survived into Classic Era.
     local need = GoldTrackDB.hudMinLevel or 70
     local lvl = UnitLevel and UnitLevel("player") or 1
     if lvl < need then visible = false end
@@ -775,7 +779,8 @@ function GT.UI.HUDMenu()
           StaticPopup_Show("GOLDTRACK_RESET")
         elseif i == 3 then
           GoldTrackDB.showHUD = not GoldTrackDB.showHUD
-          GT.UI.ApplyHUDVisibility()
+          -- force: turning it on must win over the min-level auto-hide
+          GT.UI.ApplyHUDVisibility(GoldTrackDB.showHUD)
         else
           GT.UI.ShowTab("config")
         end

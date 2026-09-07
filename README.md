@@ -35,9 +35,13 @@ The detected client is shown at the top of the Config tab. When the client chang
 | AH beats DE by | 8g | 1g |
 | DE beats vendor by | 1g | 10s |
 | Mats: or vendor + | 1g | 10s |
-| HUD min level | 70 | 60 |
+| HUD min level | 70 (min-level hide on) | 1 (min-level hide off) |
 
 `/gt version` prints the detected client and max level. Future clients (WotLK, Cata, Mists) are detected and default to keeping current values until tuned.
+
+## HUD visibility
+
+The HUD is shown **by default on both clients**. On Classic Era the "hide below min level" gate is **off by default** (`hudMinLevelOn = false`), so the HUD always displays; on TBC it's **on** (defaults to hiding below level 70). Turning the HUD on manually always forces it visible — `/gt hud`, the HUD right-click **Show HUD**, and the Config **Show HUD** checkbox all override the min-level gate, so an explicit show always works. If you don't see the HUD, run `/gt hud` (now forces it on) or `/gt hudpos` to snap it back under the minimap.
 
 ---
 

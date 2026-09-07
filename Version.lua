@@ -26,7 +26,7 @@ GT.EconomyKeys = {
   "commonAhMult", "commonAhFlat",
   "ahMinSellRate", "ahUnknownSellRate",
   "ahValueMode", "subtractDeposit", "ahDepositPreset",
-  "hudMinLevel",
+  "hudMinLevel", "hudMinLevelOn",
 }
 
 -- Per-client economy defaults. TBC matches the classic GoldTrack defaults that
@@ -47,7 +47,10 @@ GT.VERSION_PROFILES = {
       ahValueMode = "if_sold",
       subtractDeposit = true,
       ahDepositPreset = "24h_30",
-      hudMinLevel = 60,
+      -- On by default on Era: the min-level auto-hide is disabled so the HUD
+      -- shows for every character regardless of level (the user's expectation).
+      hudMinLevel = 1,
+      hudMinLevelOn = false,
     },
   },
   tbc = {
@@ -65,6 +68,7 @@ GT.VERSION_PROFILES = {
       subtractDeposit = true,
       ahDepositPreset = "24h_30",
       hudMinLevel = 70,
+      hudMinLevelOn = true,
     },
   },
   -- Stubs so future clients at least detect cleanly. They fall through to

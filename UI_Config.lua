@@ -306,13 +306,13 @@ function GT.UI.BuildConfig(p)
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Show HUD",
     function() return GoldTrackDB.showHUD end,
-    function(v) GoldTrackDB.showHUD = v; GT.UI.ApplyHUDVisibility() end,
-    "Same as /gt hud.")
+    function(v) GoldTrackDB.showHUD = v; GT.UI.ApplyHUDVisibility(v) end,
+    "Same as /gt hud. Turning it on always shows the HUD, even below the HUD min level.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "HUD min level",
     function() return GoldTrackDB.hudMinLevelOn ~= false end,
-    function(v) GoldTrackDB.hudMinLevelOn = v; GT.UI.ApplyHUDVisibility() end,
-    "Hide HUD below this character level. Default on.")
+    function(v) GT.SetEconomy("hudMinLevelOn", v); GT.UI.ApplyHUDVisibility() end,
+    "Hide the HUD below the min level. Off by default on Classic Era (HUD always shown); on for TBC.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = edit(child, y, "HUD min level value",
     function() return GT.FmtNumber(GoldTrackDB.hudMinLevel or 70) end,
