@@ -32,6 +32,7 @@ Layout (158x164):
 
 - Chrome: **Loot** (opens Loot tab) | **T A N** (TSM / Auctionator / NovaInstanceTracker; green loaded, red missing) | **x** (hides HUD; `/gt hud` to show)
 - **TIME** | unlabeled NIT count | **GOLD** (session estimate, gold with 2 decimals)
+- Every numeric value auto-shrinks its font to fit its cell (large totals never clip; short values restore the normal size).
 - Unlabeled hourly count between TIME and GOLD (no LOCK word): `3/5` white if slots left; at 5/5 a **red** `m:ss` until the oldest hourly instance frees; `-` if NIT missing. Mouseover tooltip has details plus NIT per-instance expiry lines.
 - Count is **NovaInstanceTracker only**: `NIT:getInstanceLockoutInfo()` / `NIT.hourlyLimit`, same as the NIT minimap. NIT's own minimap text already walks the log **every 1s** (`NIT:ticker`). GoldTrack does not. We pull on dungeon enter/leave (`PLAYER_ENTERING_WORLD` + 0.5s + 2s so NIT can write `leftTime`) and once when a cached lock ages past 1 hour. Never faster than 1s. HUD 0.2s only paints the cache. Miss a count only if you delete/merge a NIT row without zoning (next zone or lock expiry fixes it).
 - **G/h** large number (gold/hour, 1 decimal)
@@ -42,7 +43,7 @@ HUD `OnUpdate` always ticks (lockout countdown while stopped). Session clock is 
 
 Until `minGhSeconds` (default **30**), the G/h slot shows remaining seconds (`30s` … `1s`) instead of a rate. G/m stays `-`. Raw ratio after that; no EMA.
 
-**Start/Pause** pauses and resumes the clock. It does not reset. Reset archives the session into Total (if non-empty) and clears.
+**Start/Pause** pauses and resumes the clock. It does not reset. **Reset** (left-click) archives the session into Total (if non-empty) and clears. **Reset right-click** clears the session **without** archiving it into Total — the session is discarded. Both ask to confirm.
 
 ---
 
@@ -170,7 +171,7 @@ Persisted: `activeMs`, `state`, `leavingAt`. **Never** persist `GetTime()` / `se
 - `PLAYER_LEAVING_WORLD`: fold segment, set `leavingAt`
 - `PLAYER_LOGOUT`: STOP unless resume-after-logout
 - `/reload` within 60s + resume-after-reload: keep RUNNING
-- `PLAYER_ENTERING_WORLD`: start segment
+- `PLAYER_ENTERING_WORLD`: start segment; a `RUNNING` session started on a different character (`session.unit`) is stopped instead of resumed
 - AFK: fold / resume segment (does not STOP)
 
 ---
@@ -187,7 +188,7 @@ Transfer lock (mail/trade/merchant/AH/bank/gbank/trainer/taxi/quest/tradeskill) 
 
 OPEN (clams): pending queue; OPEN-suppress beats loot-frame. Bags 0–4 + keyring only.
 
-DE/prospect: TBC `UNIT_SPELLCAST_SUCCEEDED` is `(unit, spellName, rank)` — match `GetSpellInfo(13262)` / `31252`. Reagent itemIDs ignored while destroy window (5s) or Enchanting trade skill is open. Mats often arrive as `You receive loot:`, not `You create:`.
+DE/prospect: wire from `UNIT_SPELLCAST_SUCCEEDED` / `_START`, matching spellID **13262** / **31252** (and the localized name as a fallback). The handler accepts both the TBC Classic backport payload `(unit, castGUID, spellID, castBarID)` and the legacy `(unit, spellName, rank, lineID, spellID)` — it reads the spellID from the right argument, so DE reagent loot (dust/essence/shards/crystals) is ignored during the destroy window (5s, 10s from cast-start) or while the Enchanting trade skill is open. This stops DEing gear that was already in your bags (e.g. carried over a `/reload` or logout) from re-adding to gold/h. Mats often arrive as `You receive loot:`, not `You create:`.
 
 If DE still leaked into the session: `/gt stripde` (current session only).
 

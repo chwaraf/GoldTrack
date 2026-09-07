@@ -51,6 +51,10 @@ end
 -- 71322.5 -> "71,322.5"
 local function commaNum(n, decimals)
   if n == nil then return "-" end
+  n = tonumber(n)
+  if not n or n ~= n or math.abs(n) == math.huge then
+    return "-"
+  end
   local s = format("%." .. (decimals or 0) .. "f", n)
   local sign, int, frac = s:match("^(%-?)(%d+)(%.?.*)$")
   int = int:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
@@ -84,6 +88,46 @@ local function setText(fs, t)
   if not fs or fs._gt == t then return end
   fs._gt = t
   fs:SetText(t)
+end
+
+-- Set text then shrink the font until it fits the FontString's width (or a
+-- min readable size). Prevents big session totals (comma-separated) from
+-- clipping/overflowing a small fixed-width value slot. Uses the base size
+-- stored at creation so it returns to the normal size when text is short.
+--
+-- Why it always re-fits: WoW FontStrings elide ("...") when the text is wider
+-- than the cell, and GetStringWidth() can lag a font change within the same
+-- frame. So for each candidate size we re-apply the text and re-read the width,
+-- and we cache (text, width) so a steady value stays at its fitted size instead
+-- of being recomputed on every 1s HUD tick (but a width change, e.g. re-scale,
+-- re-fits).
+local function setFit(fs, t, minSize)
+  if not fs or not fs.SetFont then return end
+  local base = fs._baseSize or 13
+  local w = fs:GetWidth()
+  if fs._gt == t and fs._fitW == w and fs._fitted then
+    return -- same text, same cell width, already fitted: nothing to do
+  end
+  fs._gt = t
+  fs:SetText(t)
+  if not w or w <= 0 then
+    fs:SetFont(fontPath(), base, "OUTLINE")
+    fs._fitted = false
+    fs._fitW = w
+    return
+  end
+  local fp = fontPath()
+  local size = base
+  fs:SetFont(fp, size, "OUTLINE")
+  while size > (minSize or 6) do
+    fs:SetText(t) -- re-apply so GetStringWidth reflects this font
+    if fs:GetStringWidth() <= w then break end
+    size = size - 1
+    fs:SetFont(fp, size, "OUTLINE")
+  end
+  fs:SetText(t)
+  fs._fitted = true
+  fs._fitW = w
 end
 
 function GT.UI.HUDShouldPulse()
@@ -208,21 +252,21 @@ function GT.UI.UpdateHUD()
   local s = GoldTrackCharDB and GoldTrackCharDB.session
   if not s then return end
   local ms = GT.NowMs()
-  setText(hud.time, fmtTime(ms))
-  setText(hud.gold, commaNum(copperGold(s.copper or 0), 2))
+  setFit(hud.time, fmtTime(ms))
+  setFit(hud.gold, commaNum(copperGold(s.copper or 0), 2))
 
   if hud.lock then
     local used, maxn, left = GT.HourlyLockout()
     hud._lockUsed, hud._lockMax, hud._lockLeft = used, maxn, left
     if used == nil then
-      setText(hud.lock, "-")
+      setFit(hud.lock, "-")
       hud.lock:SetTextColor(0.55, 0.55, 0.55)
     elseif left then
       local sec = floor(left)
-      setText(hud.lock, format("%d:%02d", floor(sec / 60), sec % 60))
+      setFit(hud.lock, format("%d:%02d", floor(sec / 60), sec % 60))
       hud.lock:SetTextColor(1, 0.2, 0.2)
     else
-      setText(hud.lock, format("%d/%d", used, maxn or 5))
+      setFit(hud.lock, format("%d/%d", used, maxn or 5))
       hud.lock:SetTextColor(1, 1, 1)
     end
   end
@@ -241,11 +285,11 @@ function GT.UI.UpdateHUD()
     local minSec = (GoldTrackDB and GoldTrackDB.minGhSeconds) or 30
     local left = math.ceil(minSec - (ms or 0) / 1000)
     if left < 0 then left = 0 end
-    setText(hud.gph, tostring(left) .. "s")
-    setText(hud.gpm, "-")
+    setFit(hud.gph, tostring(left) .. "s")
+    setFit(hud.gpm, "-")
   else
-    setText(hud.gph, commaNum(copperGold(ghCop), 1))
-    setText(hud.gpm, commaNum(copperGold(ghCop) / 60, 1))
+    setFit(hud.gph, commaNum(copperGold(ghCop), 1))
+    setFit(hud.gpm, commaNum(copperGold(ghCop) / 60, 1))
   end
 
   local run = s.state == "RUNNING" and not GT.afkPaused
@@ -314,6 +358,7 @@ local function makeValue(parent, size, r, g, b)
   fs:SetJustifyH("CENTER")
   fs:SetWordWrap(false)
   fs:SetText("-")
+  fs._baseSize = size or 14
   return fs
 end
 
@@ -432,7 +477,7 @@ function GT.UI.BuildHUD()
 
   local goldVal = makeValue(hud, 13, 1, 1, 1)
   goldVal:SetPoint("TOPRIGHT", goldLab, "BOTTOMRIGHT", 0, -1)
-  goldVal:SetWidth(52)
+  goldVal:SetWidth(60)
   goldVal:SetJustifyH("CENTER")
   hud.gold = goldVal
 
@@ -511,10 +556,20 @@ function GT.UI.BuildHUD()
   resetBtn:SetSize(54, 18)
   resetBtn:SetPoint("BOTTOMRIGHT", pauseBtn, "TOPRIGHT", 0, 4)
   resetBtn:SetText("Reset")
-  resetBtn:SetScript("OnClick", function()
-    StaticPopup_Show("GOLDTRACK_RESET")
+  resetBtn:RegisterForClicks("AnyUp")
+  resetBtn:SetScript("OnClick", function(_, btn)
+    if btn == "RightButton" then
+      StaticPopup_Show("GOLDTRACK_CLEAR") -- clear WITHOUT saving into Total
+      return
+    end
+    StaticPopup_Show("GOLDTRACK_RESET") -- archive into Total, then clear
   end)
-  attachTip(resetBtn, "Archive this session into Total, then clear it. Asks to confirm.")
+  attachTip(resetBtn, function(tt)
+    tt:AddLine("Reset", 1, 0.82, 0)
+    tt:AddLine("Left-click: archive this session into Total, then clear it.", 0.8, 0.8, 0.8, true)
+    tt:AddLine("Right-click: clear WITHOUT saving into Total (discard).", 1, 0.82, 0, true)
+    tt:AddLine("Both ask to confirm.", 0.55, 0.55, 0.55, true)
+  end)
 
   -- Collapsed square: side = 2x Start/Pause button height. Same button chrome
   -- as Start but tinted red (so it reads as a button, not stray text). Shows
@@ -580,6 +635,7 @@ function GT.UI.BuildHUD()
   gpmLab:SetJustifyH("LEFT")
   local gpm = makeValue(hud, 14, 1, 0.820, 0)
   gpm:SetJustifyH("LEFT")
+  gpm:SetWidth(80)
   gpm:SetPoint("BOTTOMLEFT", pauseBtn, "TOPLEFT", 6, 4)
   gpmLab:SetPoint("BOTTOMLEFT", gpm, "TOPLEFT", 0, 1)
   hud.gpm = gpm

@@ -338,8 +338,20 @@ function GT.UI.BuildMain()
     rst:SetSize(80, 24)
     rst:SetPoint("LEFT", start, "RIGHT", 8, 0)
     rst:SetText("Reset")
-    rst:SetScript("OnClick", function() StaticPopup_Show("GOLDTRACK_RESET") end)
-    tipW(rst, "Archive this session into Total, then clear it. Asks to confirm.")
+    rst:RegisterForClicks("AnyUp")
+    rst:SetScript("OnClick", function(_, btn)
+      if btn == "RightButton" then
+        StaticPopup_Show("GOLDTRACK_CLEAR") -- clear WITHOUT saving into Total
+        return
+      end
+      StaticPopup_Show("GOLDTRACK_RESET") -- archive into Total, then clear
+    end)
+    tipW(rst, function(tt)
+      tt:AddLine("Reset", 1, 0.82, 0)
+      tt:AddLine("Left-click: archive this session into Total, then clear it.", 0.8, 0.8, 0.8, true)
+      tt:AddLine("Right-click: clear WITHOUT saving into Total (discard).", 1, 0.82, 0, true)
+      tt:AddLine("Both ask to confirm.", 0.55, 0.55, 0.55, true)
+    end)
   end
 
   do

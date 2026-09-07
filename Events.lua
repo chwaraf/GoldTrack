@@ -523,29 +523,45 @@ function GT.Events.OnSpellClassic(unit, spellName)
   -- we also listen for CLEU. This is last resort for gather names? skip.
 end
 
--- Shared payload handling: classic fires (unit, spellName, rank), modern
--- backports fire (unit, castGUID, spellID). Arm on START too so the window
--- covers the cast itself for bar/macro/addon casts.
-local function handleSpellCast(event, unit, a, b, c)
+-- Shared payload handling. The client is TBC Classic (2.5.5/2.5.6), where the
+-- backported event fires (unit, castGUID, spellID, castBarID): a=castGUID
+-- (string), b=spellID (number). Older docs/comment claimed (unit, spellName,
+-- rank), so we accept that form too: a=spellName (string), b=rank (number),
+-- e=spellID (number). The previous code grabbed arg c (castBarID) as the spell
+-- id, which never matched 13262/31252 and silently let DE/prospect reagent
+-- loot through after a relog. Arm on START too so the window covers the cast.
+local function handleSpellCast(event, unit, a, b, c, d, e)
   if unit ~= "player" then return end
-  local spellId, spellName
-  if type(c) == "number" then
-    spellId = c
+  local startDur = event == "UNIT_SPELLCAST_START" and GT.DESTROY_SUPPRESS_START or nil
+
+  -- Prefer spellID (numeric) wherever it actually lives, then fall back to the
+  -- localized spell name for the legacy (unit, spellName, rank) form.
+  local spellId
+  if type(b) == "number" then
+    spellId = b -- backport (spellID) or legacy (rank: harmless, matched below)
   elseif type(a) == "number" then
     spellId = a
-  elseif type(b) == "number" then
-    spellId = b
-  elseif type(a) == "string" then
-    spellName = a
+  elseif type(e) == "number" then
+    spellId = e -- legacy 5th arg (spellID on old clients)
   end
-  local startDur = event == "UNIT_SPELLCAST_START" and GT.DESTROY_SUPPRESS_START or nil
-  if spellId == 13262 or spellId == 31252 then
+
+  -- legacy (unit, spellName, rank, ...): rank is numeric in b; the actual name
+  -- lives in a. Test it regardless so rank can never be mistaken for a real id.
+  if (spellId == 13262 or spellId == 31252) then
     markDestroy("spell " .. spellId, startDur)
-  elseif spellName then
-    deName = deName or GetSpellInfo(13262)
-    prospectName = prospectName or GetSpellInfo(31252)
-    if spellName == deName or spellName == prospectName then
-      markDestroy(spellName, startDur)
+  else
+    local spellName = type(a) == "string" and a or nil
+    if spellName then
+      deName = deName or GetSpellInfo(13262)
+      prospectName = prospectName or GetSpellInfo(31252)
+      if spellName == deName or spellName == prospectName then
+        markDestroy(spellName, startDur)
+      end
+    end
+    if type(b) == "number" and GATHER_SPELL[b] then
+      gatherUntil = GetTime() + 3
+    elseif type(e) == "number" and GATHER_SPELL[e] then
+      gatherUntil = GetTime() + 3
     end
   end
 end

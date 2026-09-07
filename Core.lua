@@ -186,6 +186,15 @@ local function refreshUI()
   if GT.RefreshMain then GT.RefreshMain() end
 end
 
+-- Stable identity to guard against resuming a session on a different
+-- character. UnitFullName may be missing at ADDON_LOADED, so we only rely on
+-- it where a player frame is guaranteed (SessionStart / ENTERING_WORLD).
+function GT.CharacterKey()
+  local name = UnitFullName and UnitFullName("player") or UnitName("player")
+  local realm = GetRealmName and GetRealmName() or ""
+  return (name or "?") .. "@" .. realm
+end
+
 function GT.SessionStart()
   local s = GoldTrackCharDB.session
   if s.state == "RUNNING" then
@@ -201,6 +210,7 @@ function GT.SessionStart()
     s.startedAt = time()
     s.zone = GetRealZoneText and GetRealZoneText() or ""
   end
+  s.unit = GT.CharacterKey()
   GT.afkPaused = false
   GT.StartSegment()
   if GT.Events and GT.Events.OnSessionStart then GT.Events.OnSessionStart() end
@@ -217,10 +227,13 @@ function GT.SessionStop()
   refreshUI()
 end
 
-function GT.SessionReset(force)
+-- noArchive: clear the session WITHOUT archiving it into Total (discard).
+-- Default (nil/false) archives a non-empty session into Total first, as the
+-- confirmation popup describes. Both paths fold the clock and clear the rows.
+function GT.SessionReset(noArchive)
   local s = GoldTrackCharDB.session
   local empty = (s.copper == 0 and s.items == 0 and (not s.order or #s.order == 0))
-  if not empty then
+  if not empty and not noArchive then
     GT.Ledger.ArchiveCurrent()
   end
   GT.FoldSegment()
@@ -229,6 +242,7 @@ function GT.SessionReset(force)
   s.leavingAt = nil
   s.startedAt = nil
   s.zone = ""
+  s.unit = nil
   s.copper = 0
   s.items = 0
   s.byMethod = { AH = 0, DE = 0, VENDOR = 0, NONE = 0, GOLD = 0 }
@@ -334,6 +348,15 @@ function GT.OnAddonLoaded()
 end
 
 function GT.OnEnteringWorld()
+  -- Never continue a session that was started on a different character.
+  -- GoldTrackCharDB is per-character so this should not normally fire, but if a
+  -- session somehow survived to a mismatched unit we stop it instead of running
+  -- the clock on the wrong character.
+  local s = GoldTrackCharDB.session
+  if s.state == "RUNNING" and s.unit and s.unit ~= GT.CharacterKey() then
+    GT.SessionStop()
+    GT.Print("session stopped (different character)")
+  end
   GT.StartSegment()
   if GT.UI and GT.UI.Init then GT.UI.Init() end
   -- NIT writes leftTime on leave; it can lag behind ENTERING_WORLD
@@ -417,6 +440,17 @@ StaticPopupDialogs["GOLDTRACK_RESET"] = {
   button1 = YES,
   button2 = NO,
   OnAccept = function() GT.SessionReset() end,
+  timeout = 0,
+  whileDead = 1,
+  hideOnEscape = 1,
+  preferredIndex = 3,
+}
+
+StaticPopupDialogs["GOLDTRACK_CLEAR"] = {
+  text = "Clear this session WITHOUT archiving it into Total? The session is discarded.",
+  button1 = YES,
+  button2 = NO,
+  OnAccept = function() GT.SessionReset(true) end,
   timeout = 0,
   whileDead = 1,
   hideOnEscape = 1,
