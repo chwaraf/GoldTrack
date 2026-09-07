@@ -37,7 +37,7 @@ The detected client is shown at the top of the Config tab. When the client chang
 | Mats: or vendor + | 1g | 10s |
 | HUD min level | 70 (min-level hide on) | 1 (min-level hide off) |
 | Auction durations | 12h / 24h / 48h | 2h / 8h / 24h |
-| Deposit preset | 24h / 30% | 8h / 30% |
+| Deposit preset | 24h / 30% | 8h / 20% |
 
 `/gt version` prints the detected client and max level. Future clients (WotLK, Cata, Mists) are detected and default to keeping current values until tuned.
 
@@ -125,7 +125,7 @@ BoP / soulbound / quest bind (`bindType` 1 or 4): never AH. DE only if **this ch
 
 AH net (`if_sold`, default): `ahRaw - floor(ahRaw × cut) - floor(deposit × (1 - p))`. `cut` is 5% on faction AHs, 15% on neutral (Goblin) AHs. Deposit = vendor × preset % (0 if vendor 0); neutral AHs charge 5× the faction deposit.
 
-**Auction durations differ per client.** Both clients use the same deposit *percentages* (15 / 30 / 60% of vendor price) but with different durations, so the deposit preset is client-specific: Classic Era is **2h=15% / 8h=30% / 24h=60%** (24h is the longest and costs 60%); TBC is **12h=15% / 24h=30% / 48h=60%** (24h is the middle at 30%). The Config → Deposit preset dropdown lists only the current client's real durations. The **AH cut** setting switches between faction (5%) and neutral (15%) houses; neutral also multiplies the deposit by 5.
+**Auction durations and deposit percentages differ per client.** The durations are *different* and so are the deposit percentages: Classic Era (pre-2.3/Vanilla) is **2h=5% / 8h=20% / 24h=60%** (a 24h listing is the longest and costs 60%); TBC (post-2.3) is **12h=15% / 24h=30% / 48h=60%** (24h is the middle at 30%). The Config → Deposit preset dropdown lists only the current client's real durations and percentages. The **AH cut** setting switches between faction (5%) and neutral (15%) houses; neutral also multiplies the deposit by 5.
 
 If TSM sell rate is **fallback** (unknown), mode is forced to `if_sold` so a 50% guess does not haircut payout.
 
@@ -181,7 +181,7 @@ The valuation gold thresholds are **per client** (see **Client profiles** above)
 | Min sell rate | 0.10 |
 | Fallback sell rate | 0.50 |
 | Subtract expected AH deposit | on |
-| Deposit preset | 24h / 30% (TBC) — 8h / 30% (Era) |
+| Deposit preset | 24h / 30% (TBC) — 8h / 20% (Era) |
 | AH cut | Faction (5%) — neutral (15%) optional |
 | AH value mode | If sold |
 | Seconds before g/h | 30 |
