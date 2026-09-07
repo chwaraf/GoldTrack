@@ -21,7 +21,11 @@ GT.VERSION = "1.1.0"
 -- Bump whenever a VERSION_PROFILES.economy default CHANGES shape/meaning, so
 -- existing SavedVariables that predate the change get the corrected defaults on
 -- next load (instead of silently keeping an old value that made the HUD hide).
-GT.EconomyRev = 3
+-- rev 3 added the per-client AH deposit model + ahCut. rev 4 corrected Era's
+-- deposit percentages (5/20/60, not 15/30/60) and removed the "8h_30"/"24h_30"
+-- presets from the Era ladder, so any DB that adopted those stale keys (from a
+-- rev-3 build) must be remapped to a key Era actually has.
+GT.EconomyRev = 4
 
 -- The values the previous economy defaults left in the DB, keyed per client.
 -- A migration compares the live value against these; if it still equals the old
