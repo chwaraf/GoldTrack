@@ -37,9 +37,25 @@ end
 local function applyPoint(frame, p)
   frame:ClearAllPoints()
   if p and p[1] then
-    frame:SetPoint(p[1], _G[p[2]] or UIParent, p[3], p[4] or 0, p[5] or 0)
+    local target = _G[p[2]]
+    if target and target:IsShown() then
+      frame:SetPoint(p[1], target, p[3], p[4] or 0, p[5] or 0)
+    else
+      -- Saved anchor frame is gone (e.g. client changed): fall through to a
+      -- sane default so the HUD is never stranded off-screen or behind a
+      -- tracker (which is how clicks started bailing to Questie).
+      GT.UI.HUDDefaultPoint(frame)
+    end
     return
   end
+  GT.UI.HUDDefaultPoint(frame)
+end
+
+-- Default anchor: just below the minimap cluster. Questie (and similar) trackers
+-- habitually share that spot, so the HUD is drawn on a higher strata and can be
+-- dragged out of the way. This keeps the whole frame group together.
+function GT.UI.HUDDefaultPoint(frame)
+  frame:ClearAllPoints()
   local cluster = _G.MinimapCluster or _G.Minimap
   if cluster then
     frame:SetPoint("TOP", cluster, "BOTTOM", 0, -8)
@@ -82,6 +98,18 @@ function GT.UI.SaveHUDPoint(frame, key)
   local f = frame or hud
   local a, rel, b, x, y = f:GetPoint(1)
   GoldTrackDB[key or "hudPoint"] = { a, rel and rel:GetName() or "UIParent", b, x, y }
+end
+
+-- Snap the HUD (or collapsed square) back under the minimap. Useful when it has
+-- drifted off-screen or is buried under another addon after a client change.
+function GT.UI.HUDToDefault()
+  if GoldTrackDB.hudCollapsed and mini then
+    GoldTrackDB.miniPoint = nil
+    applyPoint(mini, nil)
+  else
+    GoldTrackDB.hudPoint = nil
+    if hud then applyPoint(hud, nil) end
+  end
 end
 
 local function setText(fs, t)
@@ -392,7 +420,10 @@ function GT.UI.BuildHUD()
   local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
   hud = CreateFrame("Frame", "GoldTrackHUD", UIParent, tmpl)
   hud:SetSize(158, 164)
-  hud:SetFrameStrata("MEDIUM")
+  -- HIGH so the HUD draws above addon trackers that share the under-minimap
+  -- spot (Questie's ObjectiveTracker on Classic Era). Otherwise the HUD can be
+  -- hidden behind it and mouse input falls through to Questie.
+  hud:SetFrameStrata("HIGH")
   hud:SetMovable(true)
   hud:EnableMouse(true)
   hud:RegisterForDrag("LeftButton")
@@ -577,7 +608,7 @@ function GT.UI.BuildHUD()
   mini = CreateFrame("Button", "GoldTrackHUDMini", UIParent, "UIPanelButtonTemplate")
   local mside = (pauseBtn:GetHeight() or 29) * 2
   mini:SetSize(mside, mside)
-  mini:SetFrameStrata("MEDIUM")
+  mini:SetFrameStrata("HIGH")
   mini:SetMovable(true)
   mini:EnableMouse(true)
   mini:RegisterForDrag("LeftButton")

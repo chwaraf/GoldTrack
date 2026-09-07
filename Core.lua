@@ -389,6 +389,9 @@ SlashCmdList.GOLDTRACK = function(msg)
     StaticPopup_Show("GOLDTRACK_RESET")
   elseif msg == "config" then
     if GT.UI then GT.UI.ShowTab("config") end
+  elseif msg == "hudpos" then
+    if GT.UI and GT.UI.HUDToDefault then GT.UI.HUDToDefault() end
+    GT.Print("HUD moved to default position (under the minimap)")
   elseif msg == "version" then
     GT.Print(GT.VersionSummary())
   elseif msg == "reseteconomy" then
@@ -404,7 +407,7 @@ SlashCmdList.GOLDTRACK = function(msg)
     GT.debug = not GT.debug
     GT.Print("debug " .. (GT.debug and "on" or "off"))
   else
-    GT.Print("/gt  /gt hud  /gt start|stop  /gt reset  /gt refresh  /gt config  /gt version  /gt selftest  /gt debug")
+    GT.Print("/gt  /gt hud  /gt hudpos  /gt start|stop  /gt reset  /gt refresh  /gt config  /gt version  /gt selftest  /gt debug")
   end
 end
 
