@@ -64,6 +64,33 @@ function GT.UI.HUDDefaultPoint(frame)
   end
 end
 
+-- Nudge a frame fully back onto the screen if it drifted off (e.g. after a
+-- client/scale change). Called after applyPoint so the HUD/mini can never be
+-- stranded somewhere unreachable.
+--
+-- Geometry note: frame:GetLeft()/GetBottom()/GetWidth()/GetHeight() for a frame
+-- parented to UIParent are all in UIParent's coordinate space, and so are
+-- UIParent:GetWidth()/GetHeight(). So compare them directly -- do NOT divide by
+-- scale (a frame's screen scale is already reflected in these values).
+function GT.UI.ClampToScreen(frame)
+  if not frame then return end
+  local x, y = frame:GetLeft(), frame:GetBottom()
+  if not x or not y or x ~= x or y ~= y then return end
+  local w, h = frame:GetWidth(), frame:GetHeight()
+  if not w or w <= 0 then w = 100 end
+  if not h or h <= 0 then h = 40 end
+  local uw, uh = UIParent:GetWidth(), UIParent:GetHeight()
+  if not uw or not uh then return end
+  if x < 0 then x = 0 end
+  if y < 0 then y = 0 end
+  if x + w > uw then x = uw - w end
+  if y + h > uh then y = uh - h end
+  if x < 0 then x = 0 end
+  if y < 0 then y = 0 end
+  frame:ClearAllPoints()
+  frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x, y)
+end
+
 -- 71322.5 -> "71,322.5"
 local function commaNum(n, decimals)
   if n == nil then return "-" end
@@ -106,9 +133,13 @@ function GT.UI.HUDToDefault()
   if GoldTrackDB.hudCollapsed and mini then
     GoldTrackDB.miniPoint = nil
     applyPoint(mini, nil)
+    GT.UI.ClampToScreen(mini)
   else
     GoldTrackDB.hudPoint = nil
-    if hud then applyPoint(hud, nil) end
+    if hud then
+      applyPoint(hud, nil)
+      GT.UI.ClampToScreen(hud)
+    end
   end
 end
 
@@ -254,14 +285,17 @@ end
 function GT.UI.ToggleHUDCollapsed()
   if not hud or not mini then return end
   if not GoldTrackDB.hudCollapsed then
-    -- Collapse onto the middle of the Start/Pause bar's last position.
-    if hud:IsShown() and pauseBtn then
-      local sc = hud:GetEffectiveScale() / UIParent:GetEffectiveScale()
-      local cx, cy = pauseBtn:GetCenter() -- parent space, origin BOTTOMLEFT
-      if cx and cy then
-        GoldTrackDB.miniPoint =
-          { "CENTER", "UIParent", "BOTTOMLEFT", cx * sc, cy * sc }
-      end
+    -- Collapse onto the HUD's current on-screen center so the mini square
+    -- appears right where the HUD was. hud:GetCenter() is already in UIParent
+    -- space (hud's parent is UIParent), so we don't need the scale gymnastics
+    -- that previously read pauseBtn's hud-local coords and produced an off-screen
+    -- position on Classic Era. Fall back to the minimap anchor if it's missing.
+    local cx, cy = hud:GetCenter()
+    if hud:IsShown() and cx and cy then
+      GoldTrackDB.miniPoint =
+        { "CENTER", "UIParent", "BOTTOMLEFT", cx, cy }
+    else
+      GoldTrackDB.miniPoint = nil
     end
   end
   GoldTrackDB.hudCollapsed = not GoldTrackDB.hudCollapsed
@@ -358,6 +392,7 @@ function GT.UI.ApplyHUDVisibility(force)
       applyPoint(mini, GoldTrackDB.miniPoint or GoldTrackDB.hudPoint)
       mini:SetScale(GoldTrackDB.hudScale or 1)
       mini:Show()
+      GT.UI.ClampToScreen(mini) -- after Show so GetLeft()/GetBottom() are valid
       miniText()
     else
       mini:Hide()
@@ -366,6 +401,7 @@ function GT.UI.ApplyHUDVisibility(force)
     if mini then mini:Hide() end
     if visible then
       hud:Show()
+      GT.UI.ClampToScreen(hud) -- after Show so GetLeft()/GetBottom() are valid
     else
       hud:Hide()
     end
@@ -626,6 +662,7 @@ function GT.UI.BuildHUD()
     if ht then ht:SetVertexColor(1, 0.55, 0.55) end
   end
   applyPoint(mini, GoldTrackDB.miniPoint or GoldTrackDB.hudPoint)
+  GT.UI.ClampToScreen(mini)
   mini:SetScale(GoldTrackDB.hudScale or 1)
   mini:Hide()
 
