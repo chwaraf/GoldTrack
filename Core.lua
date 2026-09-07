@@ -67,6 +67,7 @@ GT.defaults = {
   ahUnknownSellRate = 0.50,
   subtractDeposit = true,
   ahDepositPreset = "24h_30",
+  ahCut = "faction",
   ahDepositPercent = 0.30,
   priceSource = "atr_fresh_tsm",
   atrFreshHours = 2,

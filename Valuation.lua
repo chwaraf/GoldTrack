@@ -3,20 +3,22 @@ local GT = GoldTrack
 
 local floor = math.floor
 
-local DEPOSIT_PCT = {
-  ignore = 0,
-  ["12h_15"] = 0.15,
-  ["24h_30"] = 0.30,
-  ["48h_60"] = 0.60,
-}
-
 function GT.DepositPercent()
   local cfg = GoldTrackDB
   if not cfg.subtractDeposit then return 0 end
-  local p = cfg.ahDepositPreset or "24h_30"
-  if p == "custom" then return cfg.ahDepositPercent or 0.30 end
+  local p = cfg.ahDepositPreset or GT.AHDefault()
   if p == "ignore" then return 0 end
-  return DEPOSIT_PCT[p] or 0.30
+  -- Client-aware: resolves the preset against the running client's duration
+  -- ladder (Era 2/8/24h, TBC 12/24/48h) via GT.AHPercent.
+  local pct
+  if p == "custom" then
+    pct = cfg.ahDepositPercent or 0.30
+  else
+    pct = GT.AHPercent(p)
+  end
+  -- Neutral (Goblin) AHs charge 5x the faction deposit as well as a 15% cut.
+  if cfg.ahCut == "neutral" then pct = pct * 5 end
+  return pct
 end
 
 function GT.ComputeDeposit(vendor)
@@ -30,7 +32,7 @@ end
 function GT.AHNet(ahRaw, vendor, sellRate, sellSrc)
   if not ahRaw or ahRaw <= 0 then return nil, 0, 0, "if_sold" end
   local cfg = GoldTrackDB
-  local cut = floor(ahRaw * 0.05)
+  local cut = floor(ahRaw * GT.AHCut())
   local deposit = GT.ComputeDeposit(vendor)
   local p = sellRate
   if p == nil then p = cfg.ahUnknownSellRate or 0.50 end
@@ -146,7 +148,7 @@ function GT.ValueItem(info, soulbound)
     deposit = deposit,
     expectedLostDep = lost,
     ahMode = usedMode or "if_sold",
-    cut = ahRaw and floor(ahRaw * 0.05) or 0,
+    cut = ahRaw and floor(ahRaw * GT.AHCut()) or 0,
     sellRate = sellRate,
     sellRateSource = sellSrc,
     soldPerDay = info.soldPerDay,
@@ -189,6 +191,8 @@ function GT.SelfTest()
     ahMinSellRate = GoldTrackDB.ahMinSellRate,
     ahValueMode = GoldTrackDB.ahValueMode,
     subtractDeposit = GoldTrackDB.subtractDeposit,
+    ahDepositPreset = GoldTrackDB.ahDepositPreset,
+    ahCut = GoldTrackDB.ahCut,
   }
   local savedCanDE = GT.CanDisenchant
   GoldTrackDB.ahMinVsVendor = 100000
@@ -199,6 +203,8 @@ function GT.SelfTest()
   GoldTrackDB.ahMinSellRate = 0
   GoldTrackDB.ahValueMode = "if_sold"
   GoldTrackDB.subtractDeposit = false
+  GoldTrackDB.ahDepositPreset = "ignore" -- deposit off; fixtures are cut-only
+  GoldTrackDB.ahCut = "faction" -- keep 5% cut assumption in fixtures
   GT.CanDisenchant = function() return true end
 
   -- Runs the REAL rule engine (GT.ValueItem) with injected prices, so the
@@ -213,9 +219,10 @@ function GT.SelfTest()
       sellRate = 1, sellRateSource = "tsm", -- bypass live sell-rate lookup
     }
     local val = GT.ValueItem(info, false)
-    -- AH rows net out the 5% cut inside ValueItem; derive expected from raw.
+    -- AH rows net out the AH cut inside ValueItem; derive expected from raw.
+    -- SelfTest forces ahCut="faction" (GT.AHCut()==0.05) so this stays exact.
     local wantCop = f.want == "AH"
-      and (f.ahNet - math.floor(f.ahNet * 0.05))
+      and (f.ahNet - math.floor(f.ahNet * GT.AHCut()))
       or f.cop
     if val.method == f.want and val.unitCopper == wantCop then
       pass = pass + 1

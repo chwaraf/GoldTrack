@@ -1,6 +1,6 @@
 # GoldTrack — Addon Analysis for Future Changes
 
-Session gold-per-hour tracker for TBC Classic Anniversary (`## Interface: 20505,20506`). This document is a working analysis of how the addon is built, what invariants it relies on, the bugs fixed in this pass, and the areas most worth touching next. It is meant to be a map for future work, not a changelog.
+Session gold-per-hour tracker for **Classic Era** and **TBC Classic Anniversary** (`## Interface: 20505, 20506, 11507, 11508, 11509`; see `GoldTrack.toc`). This document is a working analysis of how the addon is built, what invariants it relies on, the bugs fixed in this pass, and the areas most worth touching next. It is meant to be a map for future work, not a changelog.
 
 ---
 
@@ -26,7 +26,7 @@ This is deliberate: "wrong g/h is worse than none." The value shown is what the 
 | --- | --- | --- |
 | `GoldTrack.toc` | Load order, interface, `SavedVariables` | — |
 | `Core.lua` | Namespace `GT`, defaults, session state machine, clock, slash, keybinds, reset/wipe popups | Reads/writes `GoldTrackDB` + `GoldTrackCharDB` |
-| `Version.lua` | Client detection, per-client economy profiles, version-snapshot/apply | `GoldTrackDB.gameVersion/phresholdPresets` |
+| `Version.lua` | Client detection, per-client economy profiles, per-client AH durations/cut, version-snapshot/apply | `GoldTrackDB.gameVersion/thresholdPresets` |
 | `Money.lua` | Coins parse/format, `GPerHour`, elapsed/number formatting | — |
 | `Prices.lua` | Price resolution (Auctionator/TSM/vendor), sell rate, cache | — |
 | `Valuation.lua` | Rule engine: pick AH/DE/VENDOR/NONE from a resolved item | — |
@@ -87,12 +87,26 @@ How it works:
 - `GT.SetEconomy(key, val)` is the write path for any `EconomyKey` (use it instead of assigning `GoldTrackDB` directly) so the per-client record stays in sync.
 - Config shows the detected client + a `Reset thresholds to <client>` button (`GT.ResetEconomy` / `/gt reseteconomy`). `/gt version` prints a summary.
 
+#### Auction House durations & cut (the Era "auction times" difference)
+This is the other genuinely client-specific thing besides gold resolution. **Both clients use the same deposit percentages (15 / 30 / 60% of vendor price), but the *durations* differ, so each client maps a duration to a different percent:**
+
+- **Classic Era** durations: **2h = 15%, 8h = 30%, 24h = 60%** (24h is the *longest* and costs 60%).
+- **TBC** durations: **12h = 15%, 24h = 30%, 48h = 60%** (24h is the *middle* at 30%).
+
+The old default `ahDepositPreset = "24h_30"` (still correct for TBC) is **wrong on Era**, where a 24h auction is the most expensive option (60%): it understated the deposit by half and offered `12h`/`48h` options that don't exist on Era. GoldTrack now:
+
+- Models presets per client in `GT.AH_PRESETS` (`era` / `tbc`), defaulting to a client-valid 30% preset (`era = "8h_30"`, `tbc = "24h_30"`).
+- `GT.AHList()` returns the running client's preset ladder; the Config dropdown builds from it, so Era never shows 12h/48h.
+- `GT.AHPercent(preset)` / `GT.AHRemap(preset)` resolve a preset against the client ladder by percent; a stale TBC `"24h_30"` on Era remaps to `"8h_30"` (both 30%) during migration. The deposit math only cares about the percent, so the loss in duration fidelity is acceptable.
+- Adds an **AH cut** economy key (`ahCut`): `"faction"` = 5% cut (city AHs), `"neutral"` = 15% cut (Goblin AHs: Booty Bay/Gadgetzan/Everlook, TBC Shattrath). Neutral also charges **5× the deposit**, which `GT.DepositPercent()` applies. Both `GT.AHNet`'s `cut` and the tooltip labels read `GT.AHCut()`.
+
 ### Version-specific concerns to watch (not yet handled)
-- **NIT / hourly lockout:** `NovaInstanceTracker` is TBC-oriented. On Era `_G.NIT` is nil → the HUD hourly count shows `-`. That is safe, but if you later want lockout on Era you'd need an Era NIT or a different source.
+- **NIT / hourly lockout:** `NovaInstanceTracker` is TBC-oriented (the addon also detects `NovaInstanceTracker-TBC`). On Era `_G.NIT` may be nil → the HUD hourly count shows `-`. That is safe, but if you later want lockout on Era you'd need an Era NIT or a different source.
 - **Spell IDs for DE/prospect:** `13262` (Disenchant) and `31252` (Prospect) are fine on both; Era has no prospecting so `31252` simply never fires. Gather-spell IDs are the same.
 - **`UNIT_SPELLCAST_*` payload** already handles both the TBC backport `(unit, castGUID, spellID)` and legacy `(unit, spellName, rank, ...)` forms (see §6).
 - **Bag/C_Container:** guarded twice (`C_Container` may exist but be partially backported on some Era builds); `GetContainerItemInfo` fallback is in place.
 - **Item link format / `GetItemInfo` order:** the modern order (sellPrice @11, classID @12) is used; it holds on both Era and TBC. If a future client changes it, revisit `Prices.Resolve`.
+- **Faction vs neutral AH is a user choice, not auto-detected.** GoldTrack cannot know which house the player uses, so it defaults to faction (5%) and lets the user flip to neutral in Config. If you want it auto-detected you'd need the AH auctioneer's vicinity, which is out of scope.
 
 ## 5. Valuation invariants (`Valuation.lua`)
 
@@ -121,6 +135,12 @@ The top-right **GOLD** value slot is 13px in a 52px-wide FontString. Once the se
 
 ### c) Right-click Reset → clear without saving
 Previously every reset went through `GOLDTRACK_RESET` ("Archive this session into Total and clear?"). Added `GOLDTRACK_CLEAR` ("…WITHOUT archiving…") and made **right-click** on the HUD Reset button (and the main-window Reset button) show it; **left-click** keeps the archive-then-clear behavior. Tooltips updated on both. `GT.SessionReset(noArchive)` now skips `ArchiveCurrent` when `noArchive` is true.
+
+### d) Auction durations were hardcoded to TBC's ladder (Era deposit was wrong)
+`DEPOSIT_PCT` / `ahDepositPreset` / the Config dropdown all assumed TBC's 12h/24h/48h with 24h=30%. On Classic Era the durations are 2h/8h/24h and **24h is the longest at 60%**, so the default `24h_30` understated deposit by half and offered nonexistent 12h/48h options. Made durations per client (`GT.AH_PRESETS`), defaulted each client to a valid 30% preset, remapped stale presets during the economy migration (`GT.AHRemap`), and made the Config dropdown build from the client's ladder. Also added the **AH cut** economy key (faction 5% / neutral 15%, neutral deposits ×5) so `GT.AHNet` and tooltips model the real cut instead of a fixed 5%.
+
+### e) `GetBuildInfo()` fallback in client detection was broken
+`local _,_,_,toc = GetBuildInfo and GetBuildInfo() or nil` truncates the call to one return value (the version string), so `toc` was always nil → `unknown`. Real clients always set `WOW_PROJECT_ID`, which masked it. Fixed by capturing the call into locals first, and **reordered the thresholds highest-first** (a naive `era >= 11500`-first check would match every modern client's interface number, e.g. 20506, as Era).
 
 ---
 

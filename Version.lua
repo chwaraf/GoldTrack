@@ -21,7 +21,7 @@ GT.VERSION = "1.1.0"
 -- Bump whenever a VERSION_PROFILES.economy default CHANGES shape/meaning, so
 -- existing SavedVariables that predate the change get the corrected defaults on
 -- next load (instead of silently keeping an old value that made the HUD hide).
-GT.EconomyRev = 2
+GT.EconomyRev = 3
 
 -- The values the previous economy defaults left in the DB, keyed per client.
 -- A migration compares the live value against these; if it still equals the old
@@ -30,9 +30,31 @@ GT.EconomyRev = 2
 -- release. (hudMinLevelOn became an economy key in rev 2; before that it was a
 -- plain Core default of `true`, which is why Era HUDs were hidden below level.)
 GT.OldEconomyDefaults = {
-  era = { hudMinLevel = 60, hudMinLevelOn = true },
-  tbc = { hudMinLevelOn = true },
+  era = { hudMinLevel = 60, hudMinLevelOn = true, ahDepositPreset = "24h_30", ahCut = "faction" },
+  tbc = { hudMinLevelOn = true, ahCut = "faction" },
 }
+
+-- Auction House deposit model, per client. BOTH clients use the SAME deposit
+-- percentages (15 / 30 / 60% of vendor price), but the AUCTION DURATIONS and
+-- therefore which duration maps to which percent differ:
+--   Classic Era: 2h=15%, 8h=30%, 24h=60%   (24h is the LONGEST = 60%)
+--   TBC:         12h=15%, 24h=30%, 48h=60%  (24h is the MIDDLE = 30%)
+-- A preset is a duration+percent pair and is client-specific: the old default
+-- "24h/30%" is wrong on Era (a 24h Era auction costs 60%, not 30%). Defaults
+-- choose a 30% preset on both, so the deposit math stays a sensible mid-level.
+GT.AH_PRESETS = {
+  era = {
+    { key = "2h_15",  label = "2h / 15%",  pct = 0.15, hours = 2 },
+    { key = "8h_30",  label = "8h / 30%",  pct = 0.30, hours = 8 },
+    { key = "24h_60", label = "24h / 60%", pct = 0.60, hours = 24 },
+  },
+  tbc = {
+    { key = "12h_15",  label = "12h / 15%",  pct = 0.15, hours = 12 },
+    { key = "24h_30",  label = "24h / 30%",  pct = 0.30, hours = 24 },
+    { key = "48h_60",  label = "48h / 60%",  pct = 0.60, hours = 48 },
+  },
+}
+GT.AH_DEFAULT = { era = "8h_30", tbc = "24h_30" }
 
 -- Keys that are economy-coupled: these get auto-set per client and are the only
 -- fields that change when you switch client. Everything else (UI, price source,
@@ -41,7 +63,7 @@ GT.EconomyKeys = {
   "ahMinVsVendor", "ahMinVsDE", "deMinVsVendor",
   "commonAhMult", "commonAhFlat",
   "ahMinSellRate", "ahUnknownSellRate",
-  "ahValueMode", "subtractDeposit", "ahDepositPreset",
+  "ahValueMode", "subtractDeposit", "ahDepositPreset", "ahCut",
   "hudMinLevel", "hudMinLevelOn",
 }
 
@@ -62,7 +84,10 @@ GT.VERSION_PROFILES = {
       ahUnknownSellRate = 0.50,
       ahValueMode = "if_sold",
       subtractDeposit = true,
-      ahDepositPreset = "24h_30",
+      -- 8h (30%) on Era: the deposit percentage is a per-client concept.
+      -- The 24h preset here maps to 60% (Era's longest), not 30%.
+      ahDepositPreset = "8h_30",
+      ahCut = "faction", -- faction AH cut 5%; neutral (Goblin) is 15%
       -- On by default on Era: the min-level auto-hide is disabled so the HUD
       -- shows for every character regardless of level (the user's expectation).
       hudMinLevel = 1,
@@ -83,6 +108,7 @@ GT.VERSION_PROFILES = {
       ahValueMode = "if_sold",
       subtractDeposit = true,
       ahDepositPreset = "24h_30",
+      ahCut = "faction",
       hudMinLevel = 70,
       hudMinLevelOn = true,
     },
@@ -109,13 +135,23 @@ function GT.DetectGameVersion()
   if p == 19 then return "mists" end     -- WOW_PROJECT_MISTS_CLASSIC
   if p == 1 then return "retail" end     -- WOW_PROJECT_MAINLINE
 
-  local _, _, _, toc = GetBuildInfo and GetBuildInfo() or nil
+  -- Fallback to the interface number. A `GetBuildInfo()` call used directly in
+  -- an `and`/`or`/parenthesised expression is truncated to a single value (the
+  -- version string), leaving `toc` nil. Capture the call into locals FIRST so
+  -- the 4th return (the interface number) survives.
+  local toc
+  if GetBuildInfo then
+    local _, _, _, maybeToc = GetBuildInfo()
+    toc = maybeToc
+  end
   toc = toc or 0
-  if toc >= 11500 then return "era"
-  elseif toc >= 20500 then return "tbc"
-  elseif toc >= 30400 then return "wotlk"
+  -- Check from the HIGHEST threshold down. A naive "era first, then tbc" would
+  -- match every modern client (e.g. 20506 >= 11500) as Era.
+  if toc >= 50500 then return "mists"
   elseif toc >= 40400 then return "cata"
-  elseif toc >= 50500 then return "mists"
+  elseif toc >= 30400 then return "wotlk"
+  elseif toc >= 20500 then return "tbc"
+  elseif toc >= 11500 then return "era"
   end
   return "unknown"
 end
@@ -128,6 +164,62 @@ end
 function GT.GameMaxLevel(v)
   local prof = GT.VERSION_PROFILES[v or GT.gameVersion or "unknown"]
   return (prof and prof.maxLevel) or 70
+end
+
+-- Auction deposit preset list for the current client (duration->percent pairs).
+-- Era: 2h=15%/8h=30%/24h=60%; TBC: 12h=15%/24h=30%/48h=60%. Falls back to TBC
+-- for unknown clients so the config dropdown is never empty.
+function GT.AHList(v)
+  return GT.AH_PRESETS[v or GT.gameVersion or "unknown"] or GT.AH_PRESETS.tbc
+end
+
+-- The default deposit preset key for a client (a 30% option on both).
+function GT.AHDefault(v)
+  return GT.AH_DEFAULT[v or GT.gameVersion or "unknown"] or "24h_30"
+end
+
+-- Deposit percentage (0..1) for a preset key on the current client. Key is
+-- client-specific (e.g. "24h_30" is TBC's 24h=30%, but "24h_60" is Era's
+-- 24h=60%). If the exact key isn't valid on this client (a stale preset from
+-- the other client, or an economy-rev before durations diverged), fall back to
+-- the percent encoded in the key suffix (_30 -> 0.30 = 24h_30/8h_30), else the
+-- client default.
+function GT.AHPercent(preset, v)
+  local client = v or GT.gameVersion or "unknown"
+  local list = GT.AHList(client)
+  if preset == "custom" then
+    return (GoldTrackDB.ahDepositPercent) or 0.30
+  end
+  for i = 1, #list do
+    if list[i].key == preset then return list[i].pct end
+  end
+  local pct = tonumber((preset or ""):match("_(%d+)$"))
+  if pct then
+    pct = pct / 100
+    return pct
+  end
+  return 0.30
+end
+
+-- Remap a stored preset key onto the current client's duration ladder, keeping
+-- the same deposit percentage. Used by the migration so a TBC "24h_30" becomes
+-- Era's "8h_30" (both 30%) rather than staying as a key Era has no 24h/30% for.
+function GT.AHRemap(preset)
+  local client = GT.gameVersion or "unknown"
+  if preset == "custom" or preset == "ignore" then return preset end
+  local pct = GT.AHPercent(preset, client)
+  local list = GT.AHList(client)
+  for i = 1, #list do
+    if math.abs(list[i].pct - pct) < 0.0001 then return list[i].key end
+  end
+  return GT.AHDefault(client)
+end
+
+-- AH cut (faction 5% / neutral 15% of the winning/hammer price). Reads the
+-- per-client `ahCut` economy key. Used for both the `cut` term in AHNet and
+-- the tooltip label.
+function GT.AHCut()
+  return (GoldTrackDB.ahCut == "neutral") and 0.15 or 0.05
 end
 
 -- Snapshot the currently-active economy fields into a plain table.
@@ -256,6 +348,18 @@ function GT.ApplyGameVersion()
             if presets[v] then presets[v][k] = nv end
           end
         end
+      end
+    end
+    -- Deposit durations diverged between clients (Era 2/8/24h vs TBC 12/24/48h).
+    -- Even a value the user chose (not the old default) may be a preset key from
+    -- the other ladder; remap it to the equivalent-% preset on THIS client so the
+    -- config dropdown shows a real option and the deposit math stays correct.
+    local preset = GoldTrackDB.ahDepositPreset
+    if preset and preset ~= "custom" and preset ~= "ignore" then
+      local remapped = GT.AHRemap(preset)
+      if remapped ~= preset then
+        GoldTrackDB.ahDepositPreset = remapped
+        if presets[v] then presets[v].ahDepositPreset = remapped end
       end
     end
     GoldTrackDB.economyRev = GT.EconomyRev

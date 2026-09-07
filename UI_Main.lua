@@ -513,7 +513,7 @@ function GT.UI.BuildMain()
         GameTooltip:AddDoubleLine("Vendor", GT.FormatCopper(rw.vendor or 0), 0.7, 0.7, 0.7, 1, 1, 1)
         GameTooltip:AddDoubleLine("DE", GT.FormatCopper(rw.de or 0), 0.7, 0.7, 0.7, 1, 1, 1)
         GameTooltip:AddDoubleLine("AH raw", GT.FormatCopper(rw.ahRaw or 0), 0.7, 0.7, 0.7, 1, 1, 1)
-        GameTooltip:AddDoubleLine("AH 5% cut", GT.FormatCopper(rw.cut or math.floor((rw.ahRaw or 0) * 0.05)), 0.7, 0.7, 0.7, 1, 1, 1)
+        GameTooltip:AddDoubleLine(format("AH cut (%.0f%%)", GT.AHCut() * 100), GT.FormatCopper(rw.cut or math.floor((rw.ahRaw or 0) * GT.AHCut())), 0.7, 0.7, 0.7, 1, 1, 1)
         GameTooltip:AddDoubleLine("Deposit / expected lost",
           GT.FormatCopper(rw.deposit or 0) .. " / " .. GT.FormatCopper(rw.expectedLostDep or 0),
           0.7, 0.7, 0.7, 1, 1, 1)
@@ -524,7 +524,7 @@ function GT.UI.BuildMain()
           GameTooltip:AddDoubleLine("Sold / day", format("%.2f", rw.soldPerDay), 0.7, 0.7, 0.7, 1, 1, 1)
         end
         GameTooltip:AddDoubleLine("AH net", GT.FormatCopper(rw.ahNet or 0), 0.7, 0.7, 0.7, 1, 1, 1)
-        GameTooltip:AddLine("Net = raw - 5% cut - expected lost deposit", 0.5, 0.5, 0.5, true)
+        GameTooltip:AddLine(format("Net = raw - %.0f%% cut - expected lost deposit", GT.AHCut() * 100), 0.5, 0.5, 0.5, true)
         if rw.ahMode == "expected_single" then
           GameTooltip:AddLine("One-post EV also multiplies payout by sell rate.", 1, 0.4, 0.3, true)
         end
@@ -715,7 +715,7 @@ function GT.UI.OpenLootEdit(row)
     tipW(ge, "Value per item in gold. Enter or clicking away applies it.")
     tipW(bv, "Use the vendor sell price as unit value.")
     tipW(bd, "Use the disenchant value as unit value.")
-    tipW(ba, "Use AH net (raw minus 5% cut minus expected lost deposit) as unit value.")
+    tipW(ba, "Use AH net (raw minus the AH cut minus expected lost deposit) as unit value.")
     tipW(br, "Revert this row to the automatic valuation.")
 
     editFrame = f

@@ -249,16 +249,30 @@ function GT.UI.BuildConfig(p)
     function(v) GT.SetEconomy("ahValueMode", v) end,
     "If sold: raw minus cut and expected lost deposit (default). One-post EV also multiplies payout by sell rate. Relist spreads lost deposit across attempts until sold.")
   p.ctrls[#p.ctrls + 1] = c
-  c, y = cycle(child, y, "Deposit preset", {
-      { "24h_30", "24h / 30%" },
-      { "12h_15", "12h / 15%" },
-      { "48h_60", "48h / 60%" },
-      { "ignore", "Ignore" },
-      { "custom", "Custom" },
+  -- Deposit presets are client-specific: the durations differ (Era 2/8/24h,
+  -- TBC 12/24/48h) even though the percentages are the same. Build the option
+  -- list from the running client's ladder so Era never offers 12h/48h.
+  do
+    local ahOpts = {}
+    for i = 1, #GT.AHList() do
+      local d = GT.AHList()[i]
+      ahOpts[#ahOpts + 1] = { d.key, d.label }
+    end
+    ahOpts[#ahOpts + 1] = { "ignore", "Ignore" }
+    ahOpts[#ahOpts + 1] = { "custom", "Custom" }
+    c, y = cycle(child, y, "Deposit preset", ahOpts,
+      function() return GoldTrackDB.ahDepositPreset end,
+      function(v) GT.SetEconomy("ahDepositPreset", v) end,
+      "Expected AH deposit = vendor sell price x percent, for the duration you post. Durations are the current client's real options (Classic Era 2h/8h/24h, TBC 12h/24h/48h). Ignore disables subtraction; Custom keeps the stored percent.")
+    p.ctrls[#p.ctrls + 1] = c
+  end
+  c, y = cycle(child, y, "AH cut", {
+      { "faction", "Faction (5%)" },
+      { "neutral", "Neutral (15%)" },
     },
-    function() return GoldTrackDB.ahDepositPreset end,
-    function(v) GT.SetEconomy("ahDepositPreset", v) end,
-    "Expected AH deposit = vendor sell price x percent (24h / 30% default). Ignore disables subtraction; Custom keeps the stored percent.")
+    function() return GoldTrackDB.ahCut end,
+    function(v) GT.SetEconomy("ahCut", v) end,
+    "AH house cut on a sale. Faction AHs (cities) take 5%; neutral Goblin AHs (Booty Bay, Gadgetzan, Everlook; TBC Shattrath) take 15%. Neutral also charges 5x the deposit, so flipping across factions is usually a loss.")
   p.ctrls[#p.ctrls + 1] = c
 
   y = y - 6
@@ -320,7 +334,7 @@ function GT.UI.BuildConfig(p)
       GT.SetEconomy("hudMinLevel", math.floor(GT.ParseNumber(t) or 70))
       GT.UI.ApplyHUDVisibility()
     end,
-    "HUD stays hidden until you reach this level. TBC default 70, Era default 60.")
+    "HUD stays hidden until you reach this level. Only used when the 'HUD min level' gate is on. TBC default 70, Era default 1.")
   p.ctrls[#p.ctrls + 1] = c
   c, y = check(child, y, "Lock HUD",
     function() return GoldTrackDB.hudLocked end,
