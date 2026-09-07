@@ -18,6 +18,22 @@ local COPPER_G = 10000
 
 GT.VERSION = "1.1.0"
 
+-- Bump whenever a VERSION_PROFILES.economy default CHANGES shape/meaning, so
+-- existing SavedVariables that predate the change get the corrected defaults on
+-- next load (instead of silently keeping an old value that made the HUD hide).
+GT.EconomyRev = 2
+
+-- The values the previous economy defaults left in the DB, keyed per client.
+-- A migration compares the live value against these; if it still equals the old
+-- default (i.e. the user never changed it), the new default is applied. Tuned
+-- fields are never touched. Only list keys whose DEFAULT changed vs the last
+-- release. (hudMinLevelOn became an economy key in rev 2; before that it was a
+-- plain Core default of `true`, which is why Era HUDs were hidden below level.)
+GT.OldEconomyDefaults = {
+  era = { hudMinLevel = 60, hudMinLevelOn = true },
+  tbc = { hudMinLevelOn = true },
+}
+
 -- Keys that are economy-coupled: these get auto-set per client and are the only
 -- fields that change when you switch client. Everything else (UI, price source,
 -- sell-rate behavior) stays where the user put it.
@@ -188,10 +204,11 @@ function GT.ApplyGameVersion()
   GT.maxLevel = GT.GameMaxLevel(v)
 
   local presets = GoldTrackDB.thresholdPresets or {}
+  local known = GoldTrackDB.gameVersionKnown
 
-  if not GoldTrackDB.gameVersionKnown then
-    -- First run with client-awareness. If the stored values are exactly the old
-    -- (TBC) defaults, treat this as fresh and adopt this client's defaults.
+  if not known then
+    -- First run with client-awareness. Fresh installs (or an upgrade whose
+    -- values are still the untouched TBC defaults) adopt this client's defaults.
     -- Otherwise keep whatever the user had, so we never clobber a tuned setup.
     local cur = GT.EconomySnapshot()
     local prof = GT.VERSION_PROFILES[v]
@@ -202,14 +219,18 @@ function GT.ApplyGameVersion()
     presets[v] = cur
     GoldTrackDB.gameVersion = v
     GoldTrackDB.gameVersionKnown = true
+    -- Fresh DB: this revision's defaults are baked in, nothing to migrate.
+    GoldTrackDB.economyRev = GT.EconomyRev
     GoldTrackDB.thresholdPresets = presets
     return
   end
 
+  -- Existing (already-initialized) DB. If the client changed, swap in the
+  -- incoming client's profile (saving the outgoing one) FIRST, then run the
+  -- one-time default-correction migration so stale defaults that changed meaning
+  -- (e.g. hudMinLevelOn on Era) catch up without clobbering user tweaks.
   if GoldTrackDB.gameVersion ~= v then
     local prev = GoldTrackDB.gameVersion or "unknown"
-    -- Save what the outgoing client had, then load the incoming client's
-    -- custom record (or its defaults if the user never touched it).
     presets[prev] = GT.EconomySnapshot()
     local prof = GT.VERSION_PROFILES[v]
     local nextVals = presets[v] or (prof and prof.economy)
@@ -219,6 +240,27 @@ function GT.ApplyGameVersion()
     end
     GoldTrackDB.gameVersion = v
     GoldTrackDB.thresholdPresets = presets
+  end
+
+  local rev = GoldTrackDB.economyRev or 0
+  if rev < GT.EconomyRev then
+    local prof = GT.VERSION_PROFILES[v] or GT.VERSION_PROFILES.unknown
+    local old = GT.OldEconomyDefaults[v]
+    if old then
+      for i = 1, #GT.EconomyKeys do
+        local k = GT.EconomyKeys[i]
+        if old[k] ~= nil and GoldTrackDB[k] == old[k] then
+          local nv = prof.economy and prof.economy[k]
+          if nv ~= nil then
+            GoldTrackDB[k] = nv
+            if presets[v] then presets[v][k] = nv end
+          end
+        end
+      end
+    end
+    GoldTrackDB.economyRev = GT.EconomyRev
+    GoldTrackDB.thresholdPresets = presets
+    if GT.UI and GT.UI.ApplyHUDVisibility then GT.UI.ApplyHUDVisibility() end
   end
 end
 
