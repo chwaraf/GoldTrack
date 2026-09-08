@@ -577,7 +577,9 @@ local function refreshEdit()
   editFrame.sum:SetText("Row = " .. GT.FormatCopper(tot))
 
   -- Smelt row: only for a smeltable ore this miner can turn into a bar. Hide it
-  -- for everything else so the edit popup stays compact for non-ore rows.
+  -- for everything else so the edit popup stays compact for non-ore rows. The
+  -- frame height grows only while the Smelt section is visible so the caption
+  -- and buttons never overlap the summary line or spill past the frame.
   if editFrame.smeltLab and editFrame.bsb and editFrame.bsV then
     local smeltable = false
     if editRow.itemID and (editRow.method or "") ~= "GOLD" and GT.SMELT and GT.SMELT[editRow.itemID] and GT.SmeltBarVals then
@@ -590,6 +592,9 @@ local function refreshEdit()
     editFrame.smeltLab:SetShown(smeltable)
     editFrame.bsb:SetShown(smeltable)
     editFrame.bsV:SetShown(smeltable)
+    if editFrame.SetHeight then
+      editFrame:SetHeight(smeltable and 200 or 168)
+    end
   end
 end
 
@@ -611,7 +616,11 @@ function GT.UI.OpenLootEdit(row)
   if not editFrame then
     local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
     local f = CreateFrame("Frame", "GoldTrackLootEdit", UIParent, tmpl)
-    f:SetSize(240, 190)
+    -- Base height 168 (the popup's original height). When the Smelt section is
+    -- shown for a smeltable ore, refreshEdit() grows it to 200 so the caption and
+    -- buttons sit below the quick-value buttons without overlapping the summary
+    -- line or spilling past the frame.
+    f:SetSize(240, 168)
     f:SetFrameStrata("DIALOG")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -716,19 +725,26 @@ function GT.UI.OpenLootEdit(row)
       refreshEdit()
     end)
 
-    -- Smelt → bar row: shown only for a smeltable ore that this miner can turn
-    -- into a bar, and where the bar has a value. Revalues the ore row at the
-    -- bar's per-ore value — either its AH net ("To bar") or its vendor price
-    -- ("Vendor bar"). Overrides like the other buttons.
+    -- Smelt → bar section: shown only for a smeltable ore that this miner can
+    -- turn into a bar, and where the bar has a value. Revalues the ore row at
+    -- the bar's per-ore value — either its AH net ("To bar") or its vendor
+    -- price ("Vendor bar"). Overrides like the other buttons.
+    -- The "Smelt <bar>" caption sits on its OWN line above the buttons, and the
+    -- buttons are anchored at fixed x=10 — NOT relative to the caption's width.
+    -- (The caption text varies with the bar name, so anchoring buttons beside it
+    -- would push them past the frame's right edge for long bar names.)
     local smeltLab = f:CreateFontString(nil, "OVERLAY")
     smeltLab:SetFont(fontPath(), 12, "")
-    smeltLab:SetPoint("TOPLEFT", 10, -132)
+    smeltLab:SetPoint("TOPLEFT", 10, -129)
+    smeltLab:SetWidth(220)
+    smeltLab:SetJustifyH("LEFT")
+    smeltLab:SetWordWrap(false)
     smeltLab:SetText("Smelt")
     smeltLab:SetTextColor(0.722, 0.722, 0.722)
     f.smeltLab = smeltLab
     local bsb = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     bsb:SetSize(64, 18)
-    bsb:SetPoint("LEFT", smeltLab, "RIGHT", 10, 0)
+    bsb:SetPoint("TOPLEFT", 10, -147)
     bsb:SetText("To bar")
     local bsV = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     bsV:SetSize(72, 18)
