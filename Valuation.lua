@@ -139,6 +139,31 @@ function GT.SmeltBetter(oreVal, info)
   }
 end
 
+-- Manual-smelt values for an ore itemID, for the Loot edit popup: the bar's
+-- per-ore AH net and per-ore vendor price (one ore feeds one bar for the listed
+-- smelts). Returns nil when not applicable (not a smeltable ore, not a miner, no
+-- price source, or the bar won't resolve/name-match). A 0 value means the bar
+-- has no such value (e.g. no AH data), so only the corresponding button enables.
+-- Unlike GT.SmeltBetter, this reports the bar's own AH net even when the rule
+-- engine would auto-prefer vendor, so the user can force the AH disposition.
+function GT.SmeltBarVals(id)
+  local s = GT.SMELT[id]
+  if not s then return nil end
+  if not (GT.CanMining and GT.CanMining()) then return nil end
+  if not (GT.Prices and GT.Prices.Resolve) then return nil end
+  local bar = GT.Prices.Resolve(s.barID)
+  if not bar or bar.name ~= s.barName then return nil end
+  local barVal = GT.ValueItem(bar, false)
+  if not barVal then return nil end
+  local n = (s.barsOut or 1) / (s.oreIn or 1)
+  local perOre = function(v) return floor((v or 0) * n) end
+  return {
+    barName = s.barName,
+    ah = perOre(barVal.ahNet or 0),
+    vendor = perOre(bar.vendor or 0),
+  }
+end
+
 -- info: table from Prices.Resolve + soulbound override
 function GT.ValueItem(info, soulbound)
   local cfg = GoldTrackDB

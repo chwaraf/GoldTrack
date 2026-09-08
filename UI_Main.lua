@@ -533,6 +533,9 @@ function GT.UI.BuildMain()
         else
           GameTooltip:AddLine("Click to edit value.", 0.6, 0.6, 0.6, true)
         end
+        if rw.itemID and GT.SMELT and GT.SMELT[rw.itemID] then
+          GameTooltip:AddLine("Mining: this ore can be revalued to its bar.", 0.5, 0.9, 0.6, true)
+        end
         GameTooltip:AddLine(rw.why or "", 0.5, 0.8, 1, true)
         GameTooltip:Show()
       end)
@@ -572,6 +575,22 @@ local function refreshEdit()
   end
   local tot = (editRow.count or 0) * (editRow.unitCopper or 0)
   editFrame.sum:SetText("Row = " .. GT.FormatCopper(tot))
+
+  -- Smelt row: only for a smeltable ore this miner can turn into a bar. Hide it
+  -- for everything else so the edit popup stays compact for non-ore rows.
+  if editFrame.smeltLab and editFrame.bsb and editFrame.bsV then
+    local smeltable = false
+    if editRow.itemID and (editRow.method or "") ~= "GOLD" and GT.SMELT and GT.SMELT[editRow.itemID] and GT.SmeltBarVals then
+      local sv = GT.SmeltBarVals(editRow.itemID)
+      if sv then
+        smeltable = true
+        if sv.barName then editFrame.smeltLab:SetText("Smelt " .. sv.barName) end
+      end
+    end
+    editFrame.smeltLab:SetShown(smeltable)
+    editFrame.bsb:SetShown(smeltable)
+    editFrame.bsV:SetShown(smeltable)
+  end
 end
 
 local function dockBesideMain(frame)
@@ -592,7 +611,7 @@ function GT.UI.OpenLootEdit(row)
   if not editFrame then
     local tmpl = BackdropTemplateMixin and "BackdropTemplate" or nil
     local f = CreateFrame("Frame", "GoldTrackLootEdit", UIParent, tmpl)
-    f:SetSize(240, 168)
+    f:SetSize(240, 190)
     f:SetFrameStrata("DIALOG")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -697,6 +716,45 @@ function GT.UI.OpenLootEdit(row)
       refreshEdit()
     end)
 
+    -- Smelt → bar row: shown only for a smeltable ore that this miner can turn
+    -- into a bar, and where the bar has a value. Revalues the ore row at the
+    -- bar's per-ore value — either its AH net ("To bar") or its vendor price
+    -- ("Vendor bar"). Overrides like the other buttons.
+    local smeltLab = f:CreateFontString(nil, "OVERLAY")
+    smeltLab:SetFont(fontPath(), 12, "")
+    smeltLab:SetPoint("TOPLEFT", 10, -132)
+    smeltLab:SetText("Smelt")
+    smeltLab:SetTextColor(0.722, 0.722, 0.722)
+    f.smeltLab = smeltLab
+    local bsb = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    bsb:SetSize(64, 18)
+    bsb:SetPoint("LEFT", smeltLab, "RIGHT", 10, 0)
+    bsb:SetText("To bar")
+    local bsV = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    bsV:SetSize(72, 18)
+    bsV:SetPoint("LEFT", bsb, "RIGHT", 4, 0)
+    bsV:SetText("Vendor bar")
+    f.bsb, f.bsV = bsb, bsV
+
+    bsb:SetScript("OnClick", function()
+      if not editRow then return end
+      if not (GT.SmeltBarVals) then return end
+      local sv = GT.SmeltBarVals(editRow.itemID)
+      if sv and sv.ah > 0 then
+        GT.Ledger.Override(editRow.key, "AH", sv.ah)
+        refreshEdit()
+      end
+    end)
+    bsV:SetScript("OnClick", function()
+      if not editRow then return end
+      if not (GT.SmeltBarVals) then return end
+      local sv = GT.SmeltBarVals(editRow.itemID)
+      if sv and sv.vendor > 0 then
+        GT.Ledger.Override(editRow.key, "VENDOR", sv.vendor)
+        refreshEdit()
+      end
+    end)
+
     local sum = f:CreateFontString(nil, "OVERLAY")
     sum:SetFont(fontPath(), 12, "")
     sum:SetPoint("BOTTOMLEFT", 10, 10)
@@ -717,6 +775,8 @@ function GT.UI.OpenLootEdit(row)
     tipW(bd, "Use the disenchant value as unit value.")
     tipW(ba, "Use AH net (raw minus the AH cut minus expected lost deposit) as unit value.")
     tipW(br, "Revert this row to the automatic valuation.")
+    tipW(bsb, "Revalue this ore at the smelted bar's per-ore AH net (bar price, after cut/deposit/sell rate).")
+    tipW(bsV, "Revalue this ore at the smelted bar's per-ore vendor sell price.")
 
     editFrame = f
   end

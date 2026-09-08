@@ -76,7 +76,7 @@ Tabs: **Total**, **Session**, **Loot**, **Config**.
 
 Total / Session / Config rows are centered on a minus: `name - value`.
 
-Loot: name filter (Enter applies, Esc clears focus), Hide 0, columns Item / Qty / Gold / Src. Coin method shows `G`. Manual overrides show `*` on Src. Click a row to edit (docks beside main). Tooltip has vendor / DE / AH raw / cut / deposit / sell rate / AH net / why.
+Loot: name filter (Enter applies, Esc clears focus), Hide 0, columns Item / Qty / Gold / Src. Coin method shows `G`. Manual overrides show `*` on Src. Click a row to edit (docks beside main). Tooltip has vendor / DE / AH raw / cut / deposit / sell rate / AH net / why. If the row is a **smeltable ore** the edit popup also shows a **Smelt** section with **To bar** (revalue at the bar's per-ore AH net) and **Vendor bar** (revalue at the bar's per-ore vendor price) — handy when you're going to smelt and either AH or vendor the bars rather than sell the ore raw.
 
 Session health line: colored **TSM / Auctionator / NIT** yes/no plus muted sellrate.
 
