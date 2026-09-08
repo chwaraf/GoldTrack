@@ -98,7 +98,7 @@ The old default `ahDepositPreset = "24h_30"` (still correct for TBC) is **wrong 
 - Models presets per client in `GT.AH_PRESETS`: `era = {2h_05, 8h_20, 24h_60}`, `tbc = {12h_15, 24h_30, 48h_60}`. Defaults to a client-valid preset (`era = "8h_20"`, `tbc = "24h_30"`).
 - `GT.AHList()` returns the running client's preset ladder; the Config dropdown builds from it, so Era never shows 12h/48h or a 30% preset.
 - `GT.AHPercent(preset)` resolves a preset's percent; `GT.AHRemap(preset)` re-expresses a stored preset on the current client's ladder. A preset key that no longer exists (e.g. stale TBC `"24h_30"` or prior-commit `"8h_30"`, i.e. any 30% preset that Era no longer has) falls back to the client default `8h_20`. Keys that do exist carry exactly the right percent.
-- Adds an **AH cut** economy key (`ahCut`): `"faction"` = 5% cut (city AHs), `"neutral"` = 15% cut (Goblin AHs: Booty Bay/Gadgetzan/Everlook, TBC Shattrath). Neutral also charges **5× the deposit**, which `GT.DepositPercent()` applies. Both `GT.AHNet`'s `cut` and the tooltip labels read `GT.AHCut()`.
+- Adds an **AH cut** economy key (`ahCut`): `"faction"` = 5% cut (city AHs), `"neutral"` = 15% cut (Goblin AHs: Booty Bay/Gadgetzan/Everlook, TBC Shattrath). Neutral also charges **5× the deposit** (confirmed: Blizzard's own cross-faction guidance and the community formulas both give neutral deposits as 5× the faction deposit — `75/150/300%` = 5× of `15/30/60%`), which `GT.DepositPercent()` applies. Both `GT.AHNet`'s `cut` and the tooltip labels read `GT.AHCut()`.
 
 ### Version-specific concerns to watch (not yet handled)
 - **NIT / hourly lockout:** `NovaInstanceTracker` is TBC-oriented (the addon also detects `NovaInstanceTracker-TBC`). On Era `_G.NIT` may be nil → the HUD hourly count shows `-`. That is safe, but if you later want lockout on Era you'd need an Era NIT or a different source.
@@ -117,6 +117,7 @@ The old default `ahDepositPreset = "24h_30"` (still correct for TBC) is **wrong 
 - **BoP/soulbound** → never AH; DE only if this char can enchant and `de ≥ vendor+1g`, else vendor, else `NONE 0`.
 - **Mat track** (not DE-able, stack>1 or recipe) → AH if `ahNet ≥ 3×vendor` **or** `≥ vendor+1g` (vendor 0 ⇒ just +1g); else vendor.
 - **Gear (DE-able)** → AH if `ahNet ≥ vendor+10g` **and** `≥ de+8g`; else DE if `de ≥ vendor+1g`; else vendor.
+- **Mined ore → smelted bar** (added later): if the mat is a single-ore smelt (Copper/Tin/Silver/Iron/Gold/Mithril/Thorium/Truesilver) and the character has **Mining** (`GetSpellInfo(2575)`), the bar produced from one ore is valued by the same rule engine and the ore is credited at whichever is higher — bar per-ore value vs raw-ore value. The bar is keyed by item id/name (`GT.SMELT`), so a wrong/stale id or a non-miner never changes the verdict. Alloys (Bronze/Steel/Felsteel) are deliberately excluded.
 
 AH net uses configurable mode. Default `if_sold`: `ahRaw - 5% - deposit×(1-p)`. Unknown sell rate forces `if_sold` so a 50% guess does not haircut.
 

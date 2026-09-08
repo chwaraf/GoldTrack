@@ -121,6 +121,8 @@ BoP / soulbound / quest bind (`bindType` 1 or 4): never AH. DE only if **this ch
 
 **Mats → AH** if `ahNet >= 3 × vendor` **or** `ahNet >= vendor + 1g`. If vendor is 0, ignore the 3× test; require only +1g.
 
+**Mined ore → smelted bar.** If the player has **Mining** and the mat is a single-ore smelt (Copper/Tin/Silver/Iron/Gold/Mithril/Thorium/Truesilver ore), GoldTrack also values the **bar** produced from one ore and credits the ore at whichever is higher — the bar's own disposition (AH net or vendor) per ore is compared against the raw ore's. So if a server posts Copper Bar above Copper Ore, looting ore is counted at the bar's value; if the bar just vendors for more, that's counted too. (Multi-reagent alloys like Bronze/Steel/Felsteel are not treated this way — they're not a clean one-ore→one-bar choice.)
+
 **Gear (DE-able) → AH** if `ahNet >= vendor + 10g` **and** `ahNet >= de + 8g`. Else DE if `de >= vendor + 1g`. Else vendor.
 
 AH net (`if_sold`, default): `ahRaw - floor(ahRaw × cut) - floor(deposit × (1 - p))`. `cut` is 5% on faction AHs, 15% on neutral (Goblin) AHs. Deposit = vendor × preset % (0 if vendor 0); neutral AHs charge 5× the faction deposit.

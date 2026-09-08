@@ -272,7 +272,7 @@ function GT.UI.BuildConfig(p)
     },
     function() return GoldTrackDB.ahCut end,
     function(v) GT.SetEconomy("ahCut", v) end,
-    "AH house cut on a sale. Faction AHs (cities) take 5%; neutral Goblin AHs (Booty Bay, Gadgetzan, Everlook; TBC Shattrath) take 15%. Neutral also charges 5x the deposit, so flipping across factions is usually a loss.")
+    "AH house cut on a sale. Faction AHs (cities) take 5% and the normal (1x) deposit; neutral Goblin AHs (Booty Bay, Gadgetzan, Everlook; TBC Shattrath) take 15% and charge 5x the deposit, so flipping across factions is usually a loss.")
   p.ctrls[#p.ctrls + 1] = c
 
   y = y - 6

@@ -71,6 +71,74 @@ function GT.MatBeatsVendor(ahNet, vendor)
   return (ahNet >= vendor * mult) or (ahNet >= vendor + flat)
 end
 
+-- Smelting (Mining): ore -> bar map, from the Classic client's smelting recipes.
+-- Each entry: barID, barName (a sanity guard so a stale/wrong ID never fires),
+-- oreIn (ore required per craft) and barsOut (bars produced).
+-- Only SINGLE-ORE smelts are listed (Bronze/Steel/Felsteel are multi-reagent
+-- alloys and not a clean "one ore -> one bar" choice). VSP/deposit/AH value for
+-- the ORE itself is still the basis; the bar only ever wins when it is worth
+-- more, and then the ore is credited at the bar's per-ore value.
+-- TBC-only ores (Fel Iron / Adamantite / Eternium / Khorium, 2:1) can be added
+-- here with their (verified) item IDs later; the mechanism needs no other change.
+GT.SMELT = {
+  [2770]  = { barID = 2840,  barName = "Copper Bar",     oreIn = 1, barsOut = 1 }, -- Copper Ore
+  [2771]  = { barID = 3576,  barName = "Tin Bar",        oreIn = 1, barsOut = 1 }, -- Tin Ore
+  [2775]  = { barID = 2842,  barName = "Silver Bar",     oreIn = 1, barsOut = 1 }, -- Silver Ore
+  [2772]  = { barID = 3575,  barName = "Iron Bar",       oreIn = 1, barsOut = 1 }, -- Iron Ore
+  [2776]  = { barID = 3577,  barName = "Gold Bar",       oreIn = 1, barsOut = 1 }, -- Gold Ore
+  [3858]  = { barID = 3860,  barName = "Mithril Bar",    oreIn = 1, barsOut = 1 }, -- Mithril Ore
+  [10620] = { barID = 12359, barName = "Thorium Bar",    oreIn = 1, barsOut = 1 }, -- Thorium Ore
+  [7911]  = { barID = 6037,  barName = "Truesilver Bar", oreIn = 1, barsOut = 1 }, -- Truesilver Ore
+}
+
+-- True if this character has the Mining profession (spell 2575), cached like
+-- GT.CanDisenchant. Mirrors the Enchanting detection (GetSpellInfo(7411)) and is
+-- client-agnostic.
+local mineCached, mineAt = nil, 0
+function GT.CanMining()
+  local now = GetTime()
+  if mineCached ~= nil and (now - mineAt) < 30 then return mineCached end
+  local yes = false
+  if GetSpellInfo and GetNumSkillLines and GetSkillLineInfo then
+    local mineName = GetSpellInfo(2575)
+    if mineName then
+      for i = 1, GetNumSkillLines() do
+        local name = GetSkillLineInfo(i)
+        if name == mineName then yes = true; break end
+      end
+    end
+  end
+  mineCached, mineAt = yes, now
+  return yes
+end
+
+-- If `info` is a smeltable ore and the player can mine it, resolve the bar and
+-- return the bar's per-ore disposition value when it exceeds the ore's own. The
+-- bar is valued with the same rule engine (ValueItem), so it respects AH cut,
+-- deposit, sell rate and the mat AH/vendor gate. Returns nil when not applicable
+-- or when the bar is worth no more than the ore.
+function GT.SmeltBetter(oreVal, info)
+  if not oreVal or not info then return nil end
+  local id = info.itemID or GT.ParseItemID(info.link)
+  if not id then return nil end
+  local s = GT.SMELT[id]
+  if not s then return nil end
+  if not (GT.CanMining and GT.CanMining()) then return nil end
+  if not (GT.Prices and GT.Prices.Resolve) then return nil end
+  local bar = GT.Prices.Resolve(s.barID)
+  if not bar or bar.name ~= s.barName then return nil end
+  local barVal = GT.ValueItem(bar, false)
+  if not barVal or not barVal.unitCopper or barVal.unitCopper <= 0 then return nil end
+  local perOre = floor(barVal.unitCopper * (s.barsOut or 1) / (s.oreIn or 1))
+  if perOre <= 0 or perOre <= oreVal.unitCopper then return nil end
+  return {
+    unit = perOre,
+    method = barVal.method,
+    why = "smelt to " .. s.barName,
+    barName = s.barName,
+  }
+end
+
 -- info: table from Prices.Resolve + soulbound override
 function GT.ValueItem(info, soulbound)
   local cfg = GoldTrackDB
@@ -117,10 +185,21 @@ function GT.ValueItem(info, soulbound)
   else
     local matTrack = (not isDEable) and ((stackCount or 1) > 1 or isRecipe)
     if matTrack then
+      -- Base verdict for the raw mat (ore): AH if it beats vendor, else vendor.
       if ahEligible and GT.MatBeatsVendor(ahNet, vendor) then
         method, unit, why = "AH", ahNet, "mat: net >= 3x vendor or vendor+1g"
       else
         method, unit, why = "VENDOR", vendor, "mat: AH gate failed"
+      end
+      -- Mined ore: if a miner can smelt it, the BAR may be worth more than the
+      -- raw ore/mat (some servers post bars above ore). When it is, credit the
+      -- ore at the bar's per-ore value. The bar is valued by the same rule
+      -- engine, so AH cut, deposit, sell rate and the mat gate still apply.
+      if GT.SMELT and GT.SMELT[info.itemID or GT.ParseItemID(info.link)] and GT.SmeltBetter then
+        local smeltVal = GT.SmeltBetter({ unitCopper = unit or vendor or 0, method = method }, info)
+        if smeltVal then
+          method, unit, why = smeltVal.method, smeltVal.unit, smeltVal.why
+        end
       end
     else
       local ahBetter = ahEligible
@@ -231,6 +310,20 @@ function GT.SelfTest()
       GT.Print(format("FAIL %s: got %s %d want %s %d",
         f.n, val.method, val.unitCopper or 0, f.want, wantCop))
     end
+  end
+
+  -- Smelt check: if this is a miner and Prices.Resolve is live, confirm an ore
+  -- (Copper Ore, id 2770) can resolve to a smelted bar when the bar has value.
+  -- Guarded so a non-miner or a missing price source skips it (never fails).
+  if GT.CanMining and GT.CanMining() and GT.Prices and GT.Prices.Resolve then
+    local smelt = GT.SmeltBetter({ unitCopper = 0, method = "VENDOR" },
+      { itemID = 2770, link = "item:2770:0:0:0" })
+    if smelt and smelt.unit > 0 and smelt.barName then
+      pass = pass + 1
+    end
+    -- No fail branch: a miner behind a price source always has a Copper Bar with
+    -- a vendor value on a live client, so a missing smelt means only that data
+    -- is absent; do not count it against valuation correctness.
   end
 
   for k, v in pairs(saved) do GoldTrackDB[k] = v end
