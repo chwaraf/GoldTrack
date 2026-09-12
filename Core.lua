@@ -495,6 +495,15 @@ StaticPopupDialogs["GOLDTRACK_WIPE"] = {
   preferredIndex = 3,
 }
 
+-- Ask the client to fetch item data for every smeltable bar (miners only). The
+-- automatic ore->bar valuation compares the ore against its bar at loot time, and
+-- GetItemInfo() is asynchronous -- without this the bar is usually still unknown
+-- when the first ore drops, so the comparison misses and the bar value stays
+-- reachable only through the manual Loot-popup buttons.
+local function prefetchSmeltBars()
+  if GT.SmeltPrefetch then GT.SmeltPrefetch() end
+end
+
 -- Bootstrap --------------------------------------------------------------
 local boot = CreateFrame("Frame")
 boot:RegisterEvent("ADDON_LOADED")
@@ -511,10 +520,16 @@ boot:SetScript("OnEvent", function(_, event, arg1)
     if GT.Events then GT.Events.Init() end
   elseif event == "PLAYER_LOGIN" then
     if GT.Prices then GT.Prices.Probe() end
+    -- Warm the smelt-bar item cache so the automatic ore->bar comparison has bar
+    -- data at loot time. Retried with the TSM passes below because skill lines
+    -- (mining detection) and the item cache are not always ready at login.
+    prefetchSmeltBars()
     -- TSM AppHelper often fills AuctionDB a few seconds after login
     GT.After(2, function() GT.RefreshTSMRows(true) end)
     GT.After(8, function() GT.RefreshTSMRows(true) end)
     GT.After(20, function() GT.RefreshTSMRows(true) end)
+    GT.After(2, prefetchSmeltBars)
+    GT.After(20, prefetchSmeltBars)
   elseif event == "PLAYER_ENTERING_WORLD" then
     GT.OnEnteringWorld()
   elseif event == "PLAYER_LEAVING_WORLD" then
@@ -563,6 +578,11 @@ function GT.RefreshTSMRows(silent)
     return
   end
   local n, hit = GT.Ledger.RefreshTSM()
+  -- Catch-up for ore rows credited before their bar's price data existed: a
+  -- fresh Auctionator/TSM scan does not fire GET_ITEM_INFO_RECEIVED, so this is
+  -- the pass that notices a bar has become priceable. Only touches rows still
+  -- flagged undecidable, and only ever raises a value (see RevalueSmeltRows).
+  if GT.Ledger.RevalueSmeltRows then GT.Ledger.RevalueSmeltRows() end
   if not silent then
     GT.Print(format("TSM refresh: %d items, %d have region data (not fallback)", n, hit))
   end

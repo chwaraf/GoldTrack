@@ -130,6 +130,10 @@ function GT.Ledger.CreditItem(mergeKey, count, val, source)
     sellRateSource = val.sellRateSource or "none",
     soldPerDay = val.soldPerDay,
     why = val.why,
+    -- Set for a smeltable ore whose ore-vs-bar comparison could not run at loot
+    -- time (bar item data / bar AH price not loaded yet). Cleared by
+    -- GT.Ledger.RevalueSmeltRows once the comparison completes.
+    smeltPending = val.smeltPending,
     firstSeen = time(),
     lastSeen = time(),
     source = source or "loot",
@@ -300,11 +304,65 @@ function GT.Ledger.ApplyPending(mergeKey, val)
   row.link = val.link or row.link
   row.quality = val.quality or row.quality
   row.texture = val.texture or row.texture
+  -- The ore only just resolved, so its own ore-vs-bar comparison may still be
+  -- undecidable; carry the flag through so the bar is re-checked later.
+  row.smeltPending = val.smeltPending
   local neu = row.count * row.unitCopper
   s.copper = s.copper + neu
   bump(s.byMethod, row.method, neu)
   GT.RefreshHUD()
   GT.RefreshMain()
+end
+
+-- Re-run the automatic ore->bar comparison for session rows that were credited
+-- while it was still undecidable (row.smeltPending).
+--
+-- Rows freeze at loot time by design, and this respects that: it only ever
+-- touches rows flagged as never having completed the comparison, only ever
+-- raises a value (GT.SmeltBetter returns nil unless the bar is strictly worth
+-- more), and never touches a manual override or a GOLD/PENDING row. The flag is
+-- cleared as soon as the comparison becomes decidable, so a row is upgraded at
+-- most once and steady-state rows are never revisited.
+--
+-- Triggered when a smelt bar's item data arrives (GET_ITEM_INFO_RECEIVED) and by
+-- the post-login price refresh passes, which is when Auctionator/TSM bar data
+-- typically becomes available. Returns the number of rows upgraded.
+function GT.Ledger.RevalueSmeltRows()
+  local s = GoldTrackCharDB and GoldTrackCharDB.session
+  if not s or not s.rows then return 0 end
+  if not (GT.SMELT and GT.SmeltBetter) then return 0 end
+  local changed = 0
+  for _, row in pairs(s.rows) do
+    if row.smeltPending and not row.manual and row.itemID and GT.SMELT[row.itemID]
+      and row.method ~= "GOLD" and row.method ~= "PENDING" then
+      local sv, reason = GT.SmeltBetter(
+        { unitCopper = row.unitCopper or 0, method = row.method },
+        { itemID = row.itemID, link = row.link })
+      if sv then
+        local old = (row.count or 0) * (row.unitCopper or 0)
+        bump(s.byMethod, row.method, -old)
+        s.copper = (s.copper or 0) - old
+        row.method = sv.method
+        row.unitCopper = sv.unit
+        row.why = sv.why
+        row.smeltPending = nil
+        local neu = (row.count or 0) * row.unitCopper
+        s.copper = s.copper + neu
+        bump(s.byMethod, row.method, neu)
+        changed = changed + 1
+        GT.Log("smelt revalue %s x%d -> %s %s", row.name or row.key, row.count or 0,
+          row.method, GT.FormatCopper(neu))
+      elseif not (GT.SmeltReasonPending and GT.SmeltReasonPending(reason)) then
+        -- Decidable now and the bar simply is not worth more: stop retrying.
+        row.smeltPending = nil
+      end
+    end
+  end
+  if changed > 0 then
+    GT.RefreshHUD()
+    GT.RefreshMain()
+  end
+  return changed
 end
 
 function GT.Ledger.ArchiveCurrent()

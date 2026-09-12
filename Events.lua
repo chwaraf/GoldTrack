@@ -612,6 +612,14 @@ local function flushBags()
 end
 
 function GT.Events.OnItemInfo(itemID)
+  -- A smelt BAR's item data landing can upgrade an ore row that was credited at
+  -- the ore's own value, because ValueItem's ore-vs-bar comparison ran before
+  -- the client had the bar (GetItemInfo is asynchronous). Checked before the
+  -- pending early-return below: this applies even with no pending rows at all.
+  if GT.IsSmeltBar and GT.IsSmeltBar(itemID)
+    and GT.Ledger and GT.Ledger.RevalueSmeltRows then
+    GT.Ledger.RevalueSmeltRows()
+  end
   if pendingInfoN <= 0 then return end
   -- scan a few pending keys
   local cleared = 0

@@ -123,6 +123,13 @@ BoP / soulbound / quest bind (`bindType` 1 or 4): never AH. DE only if **this ch
 
 **Mined ore → smelted bar.** If the player has **Mining** and the mat is a single-ore smelt (Copper/Tin/Silver/Iron/Gold/Mithril/Thorium/Truesilver ore), GoldTrack also values the **bar** produced from one ore and credits the ore at whichever is higher — the bar's own disposition (AH net or vendor) per ore is compared against the raw ore's. So if a server posts Copper Bar above Copper Ore, looting ore is counted at the bar's value; if the bar just vendors for more, that's counted too. (Multi-reagent alloys like Bronze/Steel/Felsteel are not treated this way — they're not a clean one-ore→one-bar choice.)
 
+This runs in the **automatic** valuation, not just the manual Loot-popup buttons — an ore row lands at the bar's value on its own, with no clicking. Two things make that reliable, because `GetItemInfo()` is asynchronous and the bar is usually *not* known to the client at the moment the ore drops:
+
+- **Prefetch at login.** Miners get every smelt bar's item data requested at `PLAYER_LOGIN` (retried at +2s and +20s, alongside the TSM passes, since skill lines and the item cache are not always ready immediately). So by the time you loot ore, the bar resolves and the comparison happens at loot time — the row's value is correct from the start and freeze-at-loot is preserved.
+- **Deferred re-check.** If the comparison still could not be completed (bar item data missing, or the bar loaded but no AH market data for it yet), the row is flagged `smeltPending` and re-checked when that data arrives — on `GET_ITEM_INFO_RECEIVED` for a smelt bar, and on the price-refresh passes. The re-check only ever **raises** a value (`SmeltBetter` returns nothing unless the bar is strictly worth more), never touches a **manual override**, and stops retrying a row as soon as the verdict becomes final (bar priced and simply not better). Once decided, a row is never revisited, so ordinary frozen rows are unaffected by later price movement.
+
+The manual **To bar** / **Vendor bar** buttons remain available for forcing a disposition the automatic rule would not pick (e.g. the bar's AH value when the rule engine prefers vendor).
+
 **Gear (DE-able) → AH** if `ahNet >= vendor + 10g` **and** `ahNet >= de + 8g`. Else DE if `de >= vendor + 1g`. Else vendor.
 
 AH net (`if_sold`, default): `ahRaw - floor(ahRaw × cut) - floor(deposit × (1 - p))`. `cut` is 5% on faction AHs, 15% on neutral (Goblin) AHs. Deposit = vendor × preset % (0 if vendor 0); neutral AHs charge 5× the faction deposit.

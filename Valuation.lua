@@ -115,28 +115,90 @@ end
 -- If `info` is a smeltable ore and the player can mine it, resolve the bar and
 -- return the bar's per-ore disposition value when it exceeds the ore's own. The
 -- bar is valued with the same rule engine (ValueItem), so it respects AH cut,
--- deposit, sell rate and the mat AH/vendor gate. Returns nil when not applicable
--- or when the bar is worth no more than the ore.
+-- deposit, sell rate and the mat AH/vendor gate.
+--
+-- Returns nil plus a REASON string when it declines, so callers can tell apart
+-- "the bar is genuinely worth no more" from "the comparison could not be made
+-- yet". That distinction is what makes the automatic ore->bar valuation work at
+-- all: GetItemInfo() is asynchronous, so at loot time the bar's item data (or
+-- its AH price) is often not loaded yet and the comparison silently misses.
+-- Reasons that mean "still undecidable, retry later":
+--   "bar_missing"  the bar's item data has not been fetched by the client yet
+--   "bar_unpriced" the bar loaded but has no AH market data, so its AH
+--                  disposition is unknown (a later Auctionator/TSM scan can
+--                  change the verdict)
+-- Terminal reasons (do not retry): "not_ore", "not_miner", "no_price_source",
+-- "bar_not_better".
 function GT.SmeltBetter(oreVal, info)
-  if not oreVal or not info then return nil end
+  if not oreVal or not info then return nil, "no_args" end
   local id = info.itemID or GT.ParseItemID(info.link)
-  if not id then return nil end
+  if not id then return nil, "not_ore" end
   local s = GT.SMELT[id]
-  if not s then return nil end
-  if not (GT.CanMining and GT.CanMining()) then return nil end
-  if not (GT.Prices and GT.Prices.Resolve) then return nil end
+  if not s then return nil, "not_ore" end
+  if not (GT.CanMining and GT.CanMining()) then return nil, "not_miner" end
+  if not (GT.Prices and GT.Prices.Resolve) then return nil, "no_price_source" end
   local bar = GT.Prices.Resolve(s.barID)
-  if not bar or bar.name ~= s.barName then return nil end
+  if not bar or bar.name ~= s.barName then return nil, "bar_missing" end
+  local barHasAH = bar.ahRaw and bar.ahRaw > 0
   local barVal = GT.ValueItem(bar, false)
-  if not barVal or not barVal.unitCopper or barVal.unitCopper <= 0 then return nil end
-  local perOre = floor(barVal.unitCopper * (s.barsOut or 1) / (s.oreIn or 1))
-  if perOre <= 0 or perOre <= oreVal.unitCopper then return nil end
-  return {
-    unit = perOre,
-    method = barVal.method,
-    why = "smelt to " .. s.barName,
-    barName = s.barName,
-  }
+  if barVal and barVal.unitCopper and barVal.unitCopper > 0 then
+    local perOre = floor(barVal.unitCopper * (s.barsOut or 1) / (s.oreIn or 1))
+    if perOre > 0 and perOre > (oreVal.unitCopper or 0) then
+      return {
+        unit = perOre,
+        method = barVal.method,
+        why = "smelt to " .. s.barName,
+        barName = s.barName,
+      }
+    end
+  end
+  -- The bar did not win. Whether that is final depends on whether its AH price is
+  -- known: a vendor-only comparison is final, but an unscanned bar may still beat
+  -- the ore once a price source has data for it, so ask for a retry.
+  if not barHasAH then return nil, "bar_unpriced" end
+  return nil, "bar_not_better"
+end
+
+-- True when reason means the ore-vs-bar comparison was never completed, i.e. the
+-- row should be re-checked once more item/price data arrives.
+function GT.SmeltReasonPending(reason)
+  return reason == "bar_missing" or reason == "bar_unpriced"
+end
+
+-- True when itemID is one of the bars GT.SMELT smelts to. Lets the
+-- GET_ITEM_INFO_RECEIVED handler recognise that an arrival can change the value
+-- of an ore row already in the session ledger.
+function GT.IsSmeltBar(itemID)
+  if not itemID or not GT.SMELT then return false end
+  for _, s in pairs(GT.SMELT) do
+    if s.barID == itemID then return true end
+  end
+  return false
+end
+
+-- Warm the client's item cache for every bar we can smelt to, so the automatic
+-- ore->bar comparison in ValueItem has bar data at the moment of the loot.
+--
+-- GetItemInfo(id) for an item the client has never seen returns nil and only
+-- *starts* an asynchronous fetch, which lands later as GET_ITEM_INFO_RECEIVED.
+-- Without this prefetch the ore resolves at loot time but the bar does not, so
+-- the bar value was reachable only through the manual Loot-popup buttons (by the
+-- time a player clicks, the earlier failed lookup has delivered the data).
+-- Cheap and one-shot: GT.SMELT has a handful of entries. Returns the number of
+-- bars requested (0 when not a miner, so nothing is fetched needlessly).
+function GT.SmeltPrefetch()
+  if not (GT.SMELT and GetItemInfo) then return 0 end
+  if not (GT.CanMining and GT.CanMining()) then return 0 end
+  local n = 0
+  for _, s in pairs(GT.SMELT) do
+    if s.barID then
+      -- Return value deliberately ignored: nil just means "not cached yet, fetch
+      -- started", and GT.Events.OnItemInfo re-runs the comparison when it lands.
+      GetItemInfo(s.barID)
+      n = n + 1
+    end
+  end
+  return n
 end
 
 -- Manual-smelt values for an ore itemID, for the Loot edit popup: the bar's
@@ -195,6 +257,11 @@ function GT.ValueItem(info, soulbound)
   end
 
   local method, unit, why
+  -- Set when this is a smeltable ore but the ore-vs-bar comparison could not be
+  -- completed (bar item data or bar AH price not loaded yet). The ledger stores
+  -- it on the row so the comparison is re-run when the data arrives -- otherwise
+  -- the bar value would only ever be reachable via the manual Loot-popup buttons.
+  local smeltPending
 
   if quality == 0 then
     method, unit, why = "VENDOR", vendor, "grey -> vendor"
@@ -221,9 +288,11 @@ function GT.ValueItem(info, soulbound)
       -- ore at the bar's per-ore value. The bar is valued by the same rule
       -- engine, so AH cut, deposit, sell rate and the mat gate still apply.
       if GT.SMELT and GT.SMELT[info.itemID or GT.ParseItemID(info.link)] and GT.SmeltBetter then
-        local smeltVal = GT.SmeltBetter({ unitCopper = unit or vendor or 0, method = method }, info)
+        local smeltVal, reason = GT.SmeltBetter({ unitCopper = unit or vendor or 0, method = method }, info)
         if smeltVal then
           method, unit, why = smeltVal.method, smeltVal.unit, smeltVal.why
+        elseif GT.SmeltReasonPending and GT.SmeltReasonPending(reason) then
+          smeltPending = true
         end
       end
     else
@@ -245,6 +314,7 @@ function GT.ValueItem(info, soulbound)
     unitCopper = unit or 0,
     method = method,
     why = why,
+    smeltPending = smeltPending,
     vendor = vendor,
     de = de,
     ahRaw = ahRaw or 0,
