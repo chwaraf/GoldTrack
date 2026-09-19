@@ -1,6 +1,6 @@
-## Interface: 20505, 20506, 11507, 11508, 11509, 16001
+## Interface: 16001
 ## Title: GoldTrack
-## Notes: Session gold/hour tracker (Classic Era, TBC Anniversary & WoW: Forever)
+## Notes: Session gold/hour tracker (WoW: Forever / Camelot build)
 ## Author: GoldTrack
 ## Version: 1.2.0
 ## OptionalDeps: Auctionator, TradeSkillMaster, NovaInstanceTracker
@@ -8,6 +8,7 @@
 ## SavedVariablesPerCharacter: GoldTrackCharDB
 
 Core.lua
+Forever.lua
 Version.lua
 Compat.lua
 Money.lua

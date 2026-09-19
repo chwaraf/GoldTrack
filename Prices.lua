@@ -1,7 +1,10 @@
 --[[ GoldTrack — Auctionator / TSM / GetItemInfo adapters + tiny TTL cache ]]
 local GT = GoldTrack
 
-local GetItemInfo = GetItemInfo
+-- Resolved through the compat layer: the GetItemInfo global does not exist on
+-- the Forever (retail-API) client, where C_Item.GetItemInfo replaces it with an
+-- identical positional return shape. Compat.lua loads before this file.
+local GetItemInfo = (GT.Api and GT.Api.GetItemInfo) or GetItemInfo
 local GetTime = GetTime
 local pcall = pcall
 local floor = math.floor

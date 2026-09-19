@@ -9,6 +9,17 @@ local deName, prospectName
 local encWindowUntil = 0
 local destroyUntil = 0
 
+-- Localized spell name by id, resolved through the compat layer. The old
+-- GetSpellInfo global is gone on Forever (retail API), where C_Spell.GetSpellName
+-- / C_Spell.GetSpellInfo replace it -- and C_Spell.GetSpellInfo returns a TABLE,
+-- not the old positional list, so callers must not use it directly.
+local function spellNameById(spellID)
+  local api = GT.Api
+  if api and api.SpellName then return api.SpellName(spellID) end
+  if type(GetSpellInfo) == "function" then return GetSpellInfo(spellID) end
+  return nil
+end
+
 -- Vanilla + TBC disenchant / prospect outputs. Never credit these while
 -- DEing or while the Enchanting trade skill is open.
 local DE_REAGENT = {
@@ -40,13 +51,27 @@ local function markDestroy(why, dur)
   GT.Log("destroy suppress (%s)", why or "?")
 end
 
+-- Localized name of the profession whose trade-skill window is open, or nil.
+-- Retail/Forever answer through C_TradeSkillUI; the Classic clients through
+-- GetTradeSkillLine, which does not exist on the retail API at all.
+local function openTradeSkillName()
+  local tsu = _G.C_TradeSkillUI
+  if tsu and type(tsu.GetBaseProfessionInfo) == "function" then
+    local ok, info = pcall(tsu.GetBaseProfessionInfo)
+    if ok and info and info.professionName then return info.professionName end
+  end
+  if type(GetTradeSkillLine) == "function" then
+    local line = GetTradeSkillLine()
+    if line and line ~= "UNKNOWN" then return line end
+  end
+  return nil
+end
+
 local function enchantingWindowOpen()
   if GetTime() < encWindowUntil then return true end
-  if not GetTradeSkillLine then return false end
-  local line = GetTradeSkillLine()
-  if not line or line == "UNKNOWN" then return false end
-  local enc = GetSpellInfo(7411)
-  return enc and line == enc
+  local enc = spellNameById(7411) -- Enchanting
+  if not enc then return false end
+  return openTradeSkillName() == enc
 end
 
 local function isDestroyOutput(itemID)
@@ -552,8 +577,8 @@ local function handleSpellCast(event, unit, a, b, c, d, e)
   else
     local spellName = type(a) == "string" and a or nil
     if spellName then
-      deName = deName or GetSpellInfo(13262)
-      prospectName = prospectName or GetSpellInfo(31252)
+      deName = deName or spellNameById(13262)
+      prospectName = prospectName or spellNameById(31252)
       if spellName == deName or spellName == prospectName then
         markDestroy(spellName, startDur)
       end
@@ -695,21 +720,32 @@ function GT.Events.SetListen(on)
   listenOn = on
   local f = evFrame
   if on then
-    f:RegisterEvent("CHAT_MSG_LOOT")
-    f:RegisterEvent("CHAT_MSG_MONEY")
-    f:RegisterEvent("LOOT_OPENED")
-    f:RegisterEvent("LOOT_CLOSED")
-    if LOOT_READY then f:RegisterEvent("LOOT_READY") end
-    if _G.BAG_UPDATE_DELAYED then
-      f:RegisterEvent("BAG_UPDATE_DELAYED")
-    else
-      f:RegisterEvent("BAG_UPDATE")
-    end
-    f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-    f:RegisterEvent("UNIT_SPELLCAST_START")
-    f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
-    for ev in pairs(opens) do f:RegisterEvent(ev) end
-    for ev in pairs(closes) do f:RegisterEvent(ev) end
+    -- Every registration goes through GT.Api.RegisterEvent, which pcalls it. On
+    -- Forever (retail API) RegisterEvent for an event the client does not define
+    -- THROWS and aborts the rest of this function, so one unknown name would
+    -- cost every event registered after it. Two names here are exactly that
+    -- risk, in opposite directions: BAG_UPDATE was removed on retail in 10.0
+    -- (BAG_UPDATE_DELAYED replaced it), and LOOT_READY does not exist on the
+    -- older Classic clients. Both are now attempted and whichever the client
+    -- actually has sticks -- the previous `if _G.BAG_UPDATE_DELAYED` / `if
+    -- LOOT_READY` guards tested for GLOBALS of those names, which never exist on
+    -- any client, so LOOT_READY was never registered anywhere and Classic always
+    -- got BAG_UPDATE. OnBag/OnLootOpened are idempotent (they set a dirty flag /
+    -- a timestamp), so a client that has both events firing is harmless.
+    local reg = (GT.Api and GT.Api.RegisterEvent)
+      or function(fr, ev) fr:RegisterEvent(ev) return true end
+    reg(f, "CHAT_MSG_LOOT")
+    reg(f, "CHAT_MSG_MONEY")
+    reg(f, "LOOT_OPENED")
+    reg(f, "LOOT_CLOSED")
+    reg(f, "LOOT_READY")
+    reg(f, "BAG_UPDATE_DELAYED")
+    reg(f, "BAG_UPDATE")
+    reg(f, "UNIT_SPELLCAST_SUCCEEDED")
+    reg(f, "UNIT_SPELLCAST_START")
+    reg(f, "GET_ITEM_INFO_RECEIVED")
+    for ev in pairs(opens) do reg(f, ev) end
+    for ev in pairs(closes) do reg(f, ev) end
   else
     f:UnregisterAllEvents()
     f:SetScript("OnUpdate", nil)
@@ -720,8 +756,8 @@ end
 function GT.Events.Init()
   compileAll()
   initBags()
-  deName = GetSpellInfo(13262)
-  prospectName = GetSpellInfo(31252)
+  deName = spellNameById(13262)
+  prospectName = spellNameById(31252)
 
   evFrame = CreateFrame("Frame")
   evFrame:SetScript("OnEvent", function(_, event, ...)
@@ -739,7 +775,12 @@ function GT.Events.Init()
       handleSpellCast(event, ...)
     elseif event == "TRADE_SKILL_SHOW" then
       GT.Events.Transfer(true)
-      if enchantingWindowOpen() or (GetTradeSkillLine and GetSpellInfo(7411) and GetTradeSkillLine() == GetSpellInfo(7411)) then
+      -- Extend the grace window while the enchanting table is open, so DE
+      -- reagents are not mistaken for loot. enchantingWindowOpen() already
+      -- consults the open trade-skill window (C_TradeSkillUI on Forever,
+      -- GetTradeSkillLine on Classic), which is what the second half of the
+      -- old condition did by hand.
+      if enchantingWindowOpen() then
         encWindowUntil = GetTime() + 3600
       end
     elseif event == "TRADE_SKILL_CLOSE" then

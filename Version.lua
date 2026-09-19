@@ -16,7 +16,7 @@ local GT = GoldTrack
 local floor = math.floor
 local COPPER_G = 10000
 
-GT.VERSION = "1.1.0"
+GT.VERSION = "1.2.0"
 
 -- Bump whenever a VERSION_PROFILES.economy default CHANGES shape/meaning, so
 -- existing SavedVariables that predate the change get the corrected defaults on
@@ -61,8 +61,20 @@ GT.AH_PRESETS = {
     { key = "24h_30",  label = "24h / 30%",  pct = 0.30, hours = 24 },
     { key = "48h_60",  label = "48h / 60%",  pct = 0.60, hours = 48 },
   },
+  -- WoW: Forever runs the retail engine, whose auction house offers the
+  -- 12/24/48h ladder (Forever's own guides describe a 48-hour listing window
+  -- and "the same deposit-vs-profit math as Classic"), so it inherits TBC's
+  -- duration->percent mapping rather than Vanilla's 2/8/24h. This is a
+  -- beta-stage assumption: the fee table is tuned to Forever's new economy and
+  -- is not published, so if it turns out to differ, change it HERE only -- the
+  -- presets, the default and the migration remap all read this table.
+  forever = {
+    { key = "12h_15",  label = "12h / 15%",  pct = 0.15, hours = 12 },
+    { key = "24h_30",  label = "24h / 30%",  pct = 0.30, hours = 24 },
+    { key = "48h_60",  label = "48h / 60%",  pct = 0.60, hours = 48 },
+  },
 }
-GT.AH_DEFAULT = { era = "8h_20", tbc = "24h_30" }
+GT.AH_DEFAULT = { era = "8h_20", tbc = "24h_30", forever = "24h_30" }
 
 -- Keys that are economy-coupled: these get auto-set per client and are the only
 -- fields that change when you switch client. Everything else (UI, price source,
@@ -121,6 +133,34 @@ GT.VERSION_PROFILES = {
       hudMinLevelOn = true,
     },
   },
+  -- World of Warcraft: Forever (codename Camelot; build 1.60.x, interface
+  -- 16001). A permanent Classic-era branch on the RETAIL engine: level cap 60
+  -- forever, Classic XP curve and a Classic-scale gold economy, but the client
+  -- is mainline (WOW_PROJECT_ID == MAINLINE, retail API, no Classic globals).
+  -- Economy thresholds therefore match Era's (a level-60 Classic economy, an
+  -- order of magnitude below TBC's), while the AH duration ladder follows the
+  -- retail engine -- see GT.AH_PRESETS.forever.
+  forever = {
+    label = "WoW: Forever",
+    maxLevel = 60,
+    economy = {
+      ahMinVsVendor = 1 * COPPER_G,
+      ahMinVsDE     = 1 * COPPER_G,
+      deMinVsVendor = 1000,
+      commonAhMult  = 3,
+      commonAhFlat  = 1000,
+      ahMinSellRate = 0.10,
+      ahUnknownSellRate = 0.50,
+      ahValueMode = "if_sold",
+      subtractDeposit = true,
+      ahDepositPreset = "24h_30",
+      ahCut = "faction",
+      -- Same reasoning as Era: do not hide the HUD below a level threshold on a
+      -- client where every character is in the 1-60 band anyway.
+      hudMinLevel = 1,
+      hudMinLevelOn = false,
+    },
+  },
   -- Stubs so future clients at least detect cleanly. They fall through to
   -- "keep current values" (no economy override) until tuned; add a real
   -- economy table when you want per-client defaults for them.
@@ -131,10 +171,44 @@ GT.VERSION_PROFILES = {
   unknown = { label = "Unknown client",       maxLevel = 70, economy = nil },
 }
 
--- Detect the running client. Prefer WOW_PROJECT_ID (2=Classic Era, 5=TBC,
--- 11=Wrath, 14=Cata, 19=Mists, 1=Retail); fall back to the interface number so
--- we still come up on any client that lacks the constant.
+-- The client's interface number (the 4th GetBuildInfo return), or 0.
+--
+-- A `GetBuildInfo()` call used directly inside an `and`/`or`/parenthesised
+-- expression is truncated to a single value (the version string), leaving the
+-- interface number nil. Capture the call into locals FIRST so the 4th return
+-- survives.
+function GT.InterfaceVersion()
+  if type(GetBuildInfo) ~= "function" then return 0 end
+  local _, _, _, toc = GetBuildInfo()
+  return toc or 0
+end
+
+-- True when running on World of Warcraft: Forever (Camelot).
+--
+-- Forever is a retail-engine fork, so NO runtime project id separates it from
+-- live Retail: WOW_PROJECT_ID is WOW_PROJECT_MAINLINE (1) on both. The two
+-- signals that do work, in order of authority:
+--   1. Load-time: Forever.lua ran, which only happens from GoldTrack_Camelot.toc
+--      (the manifest the Forever client reads). Cannot be set on another client.
+--   2. Runtime: the interface number is in the 16000-19999 band (16001 = 1.60.x).
+--      This is the same band AceDB-3.0 uses for its own Forever handling. It is
+--      what makes a plain multi-interface GoldTrack.toc install detect correctly
+--      too. Retail is >= 100000, TBC Anniversary 20505+, Era 11507+, so the band
+--      is unambiguous among the clients this addon ships for.
+function GT.IsForever()
+  if GT.isForeverTOC then return true end
+  local toc = GT.InterfaceVersion()
+  return toc >= 16000 and toc < 20000
+end
+
+-- Detect the running client.
 function GT.DetectGameVersion()
+  -- Forever FIRST: it reports WOW_PROJECT_MAINLINE, so the project-id switch
+  -- below would otherwise classify it as "retail", and the interface fallback
+  -- would classify 16001 as "era" (16001 >= 11500) and apply Era's AH duration
+  -- ladder and level cap to a retail-engine client.
+  if GT.IsForever() then return "forever" end
+
   local p = WOW_PROJECT_ID
   if p == 2 then return "era" end        -- WOW_PROJECT_CLASSIC
   if p == 5 then return "tbc" end        -- WOW_PROJECT_BURNING_CRUSADE_CLASSIC
@@ -143,16 +217,8 @@ function GT.DetectGameVersion()
   if p == 19 then return "mists" end     -- WOW_PROJECT_MISTS_CLASSIC
   if p == 1 then return "retail" end     -- WOW_PROJECT_MAINLINE
 
-  -- Fallback to the interface number. A `GetBuildInfo()` call used directly in
-  -- an `and`/`or`/parenthesised expression is truncated to a single value (the
-  -- version string), leaving `toc` nil. Capture the call into locals FIRST so
-  -- the 4th return (the interface number) survives.
-  local toc
-  if GetBuildInfo then
-    local _, _, _, maybeToc = GetBuildInfo()
-    toc = maybeToc
-  end
-  toc = toc or 0
+  -- Fallback to the interface number for a client that lacks the constant.
+  local toc = GT.InterfaceVersion()
   -- Check from the HIGHEST threshold down. A naive "era first, then tbc" would
   -- match every modern client (e.g. 20506 >= 11500) as Era.
   if toc >= 50500 then return "mists"
@@ -277,6 +343,8 @@ function GT.SetEconomy(key, value)
   if not presets[v] then presets[v] = {} end
   presets[v][key] = value
   GoldTrackDB.thresholdPresets = presets
+  -- Forever only: keep the per-character config mirror current (no-op elsewhere).
+  if GT.SaveCfgMirror then GT.SaveCfgMirror() end
 end
 
 -- Reset the active economy fields to this client's defaults and clear that
@@ -295,6 +363,7 @@ function GT.ResetEconomy()
   GoldTrackDB.thresholdPresets = presets
   GT.Print("GoldTrack: reset economy to " .. prof.label .. " defaults.")
   if GT.UI and GT.UI.RefreshConfig then GT.UI.RefreshConfig() end
+  if GT.SaveCfgMirror then GT.SaveCfgMirror() end
 end
 
 -- Called from OnAddonLoaded after defaults are merged. Detects the client,

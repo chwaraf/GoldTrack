@@ -1,13 +1,16 @@
-# GoldTrack — Classic Era & TBC Anniversary
+# GoldTrack — Classic Era, TBC Anniversary & WoW: Forever
 
-Session gold-per-hour tracker for **Classic Era (1.15.x)** and **TBC Anniversary (2.5.5 / 2.5.6)**, from a single package. `## Interface: 20505, 20506, 11507, 11508, 11509`.
+Session gold-per-hour tracker for **Classic Era (1.15.x)**, **TBC Anniversary (2.5.5 / 2.5.6)** and **WoW: Forever (1.60.x)**, from a single package. `## Interface: 20505, 20506, 11507, 11508, 11509, 16001`.
 
 Copy the `GoldTrack` folder to the client's addons directory:
 
 - TBC Anniversary: `World of Warcraft/_anniversary_/Interface/AddOns/GoldTrack`
 - Classic Era: `World of Warcraft/_classic_era_/Interface/AddOns/GoldTrack`
+- WoW: Forever: `World of Warcraft/_classic_beta_/Interface/AddOns/GoldTrack`
 
-The addon auto-detects which client it is running on (`WOW_PROJECT_ID`, falling back to the interface number) and applies the right economy defaults for that client (see **Client profiles** below).
+Forever is a **retail-engine** client, so it is loaded from `GoldTrack_Camelot.toc` (`camelot` is Forever's game-type token). That manifest is identical to the base one except that it also loads `Forever.lua`, which flags the rest of the addon. If the client ever falls back to the plain `GoldTrack.toc`, detection still works — the base manifest lists 16001 too.
+
+The addon auto-detects which client it is running on (`Forever.lua` load flag first, then the interface number, then `WOW_PROJECT_ID`) and applies the right economy defaults for that client (see **Client profiles** below).
 
 Optional: **Auctionator** and/or **TradeSkillMaster**. Without them, only vendor prices are used. Region sell rates need the **TSM Desktop App + Anniversary AppHelper**, not just the in-game addon.
 
@@ -29,17 +32,50 @@ GoldTrack behaves differently per client because the **gold resolution** differs
 
 The detected client is shown at the top of the Config tab. When the client changes, GoldTrack swaps in that client's defaults **and remembers your own per-client tweaks**, so a tuned Era setup isn't overwritten by logging into TBC and vice versa. A "Reset thresholds to <client>" button (or `/gt reseteconomy`) restores the detected client's defaults.
 
-| | TBC / Anniversary | Classic Era |
-| --- | --- | --- |
-| AH beats vendor by | 10g | 1g |
-| AH beats DE by | 8g | 1g |
-| DE beats vendor by | 1g | 10s |
-| Mats: or vendor + | 1g | 10s |
-| HUD min level | 70 (min-level hide on) | 1 (min-level hide off) |
-| Auction durations | 12h / 24h / 48h | 2h / 8h / 24h |
-| Deposit preset | 24h / 30% | 8h / 20% |
+| | TBC / Anniversary | Classic Era | WoW: Forever |
+| --- | --- | --- | --- |
+| AH beats vendor by | 10g | 1g | 1g |
+| AH beats DE by | 8g | 1g | 1g |
+| DE beats vendor by | 1g | 10s | 10s |
+| Mats: or vendor + | 1g | 10s | 1g |
+| HUD min level | 70 (min-level hide on) | 1 (min-level hide off) | 1 (min-level hide off) |
+| Max level | 70 | 60 | 60 |
+| Auction durations | 12h / 24h / 48h | 2h / 8h / 24h | 12h / 24h / 48h |
+| Deposit preset | 24h / 30% | 8h / 20% | 24h / 30% |
+
+Forever gets **Era-scale thresholds** (its level cap is 60 and its prices are Classic-sized, so TBC's 10g gates would never fire) on top of the **retail engine's 12/24/48h auction ladder** — see **WoW: Forever** below for why that pairing is a deliberate, documented assumption rather than a guess.
 
 `/gt version` prints the detected client and max level. Future clients (WotLK, Cata, Mists) are detected and default to keeping current values until tuned.
+
+## WoW: Forever (1.60.x / "Camelot")
+
+Forever is Blizzard's permanent Classic-line megaserver branch (beta 2026-09-17, full launch 2026-11-04). It is a **Classic game on the retail client**: level cap 60, Classic economy and Classic auction-house rules — but the **retail API surface**. That combination is what breaks Classic addons, so GoldTrack ports the API rather than guessing at it.
+
+**Detection.** Forever reports `WOW_PROJECT_ID == WOW_PROJECT_MAINLINE`, i.e. it is *indistinguishable from retail by project id*, and its interface number (16001) is outside every Classic band. Checking `WOW_PROJECT_ID` first therefore mislabels it "retail", and an interface-number cascade mislabels it "era" (16001 ≥ 11500). `GT.DetectGameVersion()` resolves Forever **first**, from the load flag set by `Forever.lua` (which only `GoldTrack_Camelot.toc` lists) and from the 16000–19999 interface band, then falls back to the project-id/interface cascade for the Classic clients. Related trap for anyone reading this to port something else: `select(4, GetBuildInfo()) >= 100000` misreads 16001 as a Classic build.
+
+**API layer (`Compat.lua`).** Every Classic-only global the addon used is resolved through `GT.Api`, which picks whichever implementation the client actually has:
+
+| Used to be (Classic) | Forever (retail engine) | Where it mattered |
+| --- | --- | --- |
+| `GetItemInfo` | `C_Item.GetItemInfo` | `Prices.lua` captured it at file scope, so it was `nil` on Forever and crashed before `ADDON_LOADED` |
+| `GetItemInfoInstant`, `GetItemCount` | `C_Item.*` | price probes, bag transforms |
+| `GetSpellInfo` | `C_Spell.GetSpellName` / `C_Spell.GetSpellInfo` (returns a **table**, not positional values) | DE/prospect spell matching, open-trade-skill name |
+| `IsAddOnLoaded`, `GetAddOnMetadata` | `C_AddOns.*` | Auctionator / TSM / NIT detection |
+| `GetContainerItemInfo` | `C_Container.GetContainerItemInfo` (returns a **table**) | bag scans for OPEN/DE transforms |
+| `GetNumSkillLines` / `GetSkillLineInfo` | **absent** — `GetProfessions` + `GetProfessionInfo` | Mining and Enchanting detection |
+| `GetTradeSkillLine` | **absent** — `C_TradeSkillUI.GetBaseProfessionInfo` | "Enchanting window is open" suppression |
+
+Professions are now asked for by **spell id** rather than by localized name: `GT.Api.KnowsProfession(2575)` for Mining and `(7411)` for Enchanting. That is what makes the automatic ore→bar valuation and the DE-suppression window work on a client that has no skill lines at all — and it stays correct on a non-English client, which the old name matching never was.
+
+**Events throw.** On Forever, registering an event the client does not define is a hard Lua error, and that aborts the rest of the file — so one bad name silently kills every registration after it. Two real cases were latent in GoldTrack: `BAG_UPDATE` (removed in retail 10.0) was always registered because the guard tested `_G.BAG_UPDATE_DELAYED`, and event names are never globals; `LOOT_READY` was *never* registered because `if LOOT_READY then` tested a global that does not exist. `GT.Api.RegisterEvent()` pcall-wraps every registration and `GT.Events.SetListen()` attempts both bag events and `LOOT_READY`, so each client registers what it has and skips the rest. Boot events (`ADDON_LOADED`, `PLAYER_LOGIN`, `PLAYER_ENTERING_WORLD`, …) exist everywhere and are left direct.
+
+**SavedVariables do not persist — yet.** The Forever beta writes SavedVariables on exit but does not read the **account-wide** table back (a client bug, independently confirmed by several authors during the beta); **per-character** tables do come back. GoldTrack's ledger is per-character (`GoldTrackCharDB`), so sessions, rows and archives are unaffected. Only the account-wide config would reset on every login, so on Forever — and only there — GoldTrack mirrors `GoldTrackDB` into `GoldTrackCharDB.__cfgMirror` and restores it when the account table arrives empty. Both directions are no-ops on other clients, and the restore self-disables the moment Blizzard fixes the bug (a correctly restored `GoldTrackDB` has `gameVersionKnown` set, which is the marker used to tell the two cases apart). A note is printed once per session. SavedVariables are also always **mutated in place** and never reassigned, including the `/gt wipe` path, because the client serializes the table it captured at load.
+
+**Secret values are not used.** Forever hides combat values (damage, health, power) from addons, which is why damage meters and boss timers cannot work there. GoldTrack reads only chat loot, money strings, item info and profession/spell facts, so nothing it depends on is secret.
+
+**Economy assumptions (beta stage).** Forever's auction-house fee table is not published. GoldTrack uses **Era-scale valuation thresholds** (level-60 Classic prices, so TBC's 10g gates would never fire) with the **retail engine's 12h/24h/48h duration ladder and TBC's 15/30/60% deposits**, which is what Forever's own guides describe (a 48-hour listing window, "the same deposit-vs-profit math as Classic"). If the real fee table differs, it is changed in **one place**: `GT.AH_PRESETS.forever` in `Version.lua`, which the presets, the default and the migration remap all read. `/gt reseteconomy` re-applies Forever's defaults after any such change.
+
+**Tested how.** Both client families are booted from their actual TOC files under a Lua mock that reproduces Forever's environment — Classic globals absent, `C_Item`/`C_Spell`/`C_AddOns`/`C_Container`/`C_TradeSkillUI` present, `WOW_PROJECT_ID = 1`, interface 16001, and `RegisterEvent` **throwing** on unknown events so the pcall guard is genuinely exercised. Client detection, the AH ladder, profession checks, item resolution, the full ore→bar valuation (including the deferred `GET_ITEM_INFO_RECEIVED` upgrade), every window build and the SavedVariables mirror all produce **identical results** in both modes.
 
 ## HUD visibility
 
@@ -123,7 +159,7 @@ BoP / soulbound / quest bind (`bindType` 1 or 4): never AH. DE only if **this ch
 
 **Mined ore → smelted bar.** If the player has **Mining** and the mat is a single-ore smelt (Copper/Tin/Silver/Iron/Gold/Mithril/Thorium/Truesilver ore), GoldTrack also values the **bar** produced from one ore and credits the ore at whichever is higher — the bar's own disposition (AH net or vendor) per ore is compared against the raw ore's. So if a server posts Copper Bar above Copper Ore, looting ore is counted at the bar's value; if the bar just vendors for more, that's counted too. (Multi-reagent alloys like Bronze/Steel/Felsteel are not treated this way — they're not a clean one-ore→one-bar choice.)
 
-This runs in the **automatic** valuation, not just the manual Loot-popup buttons — an ore row lands at the bar's value on its own, with no clicking. Two things make that reliable, because `GetItemInfo()` is asynchronous and the bar is usually *not* known to the client at the moment the ore drops:
+This runs in the **automatic** valuation, not just the manual Loot-popup buttons — an ore row lands at the bar's value on its own, with no clicking. Two things make that reliable, because item info (`GetItemInfo()` on Classic, `C_Item.GetItemInfo()` on Forever) is asynchronous and the bar is usually *not* known to the client at the moment the ore drops:
 
 - **Prefetch at login.** Miners get every smelt bar's item data requested at `PLAYER_LOGIN` (retried at +2s and +20s, alongside the TSM passes, since skill lines and the item cache are not always ready immediately). So by the time you loot ore, the bar resolves and the comparison happens at loot time — the row's value is correct from the start and freeze-at-loot is preserved.
 - **Deferred re-check.** If the comparison still could not be completed (bar item data missing, or the bar loaded but no AH market data for it yet), the row is flagged `smeltPending` and re-checked when that data arrives — on `GET_ITEM_INFO_RECEIVED` for a smelt bar, and on the price-refresh passes. The re-check only ever **raises** a value (`SmeltBetter` returns nothing unless the bar is strictly worth more), never touches a **manual override**, and stops retrying a row as soon as the verdict becomes final (bar priced and simply not better). Once decided, a row is never revisited, so ordinary frozen rows are unaffected by later price movement.
@@ -134,7 +170,7 @@ The manual **To bar** / **Vendor bar** buttons remain available for forcing a di
 
 AH net (`if_sold`, default): `ahRaw - floor(ahRaw × cut) - floor(deposit × (1 - p))`. `cut` is 5% on faction AHs, 15% on neutral (Goblin) AHs. Deposit = vendor × preset % (0 if vendor 0); neutral AHs charge 5× the faction deposit.
 
-**Auction durations and deposit percentages differ per client.** The durations are *different* and so are the deposit percentages: Classic Era (pre-2.3/Vanilla) is **2h=5% / 8h=20% / 24h=60%** (a 24h listing is the longest and costs 60%); TBC (post-2.3) is **12h=15% / 24h=30% / 48h=60%** (24h is the middle at 30%). The Config → Deposit preset dropdown lists only the current client's real durations and percentages. The **AH cut** setting switches between faction (5%) and neutral (15%) houses; neutral also multiplies the deposit by 5.
+**Auction durations and deposit percentages differ per client.** The durations are *different* and so are the deposit percentages: Classic Era (pre-2.3/Vanilla) is **2h=5% / 8h=20% / 24h=60%** (a 24h listing is the longest and costs 60%); TBC and Forever (post-2.3 ladder) are **12h=15% / 24h=30% / 48h=60%** (24h is the middle at 30%). The Config → Deposit preset dropdown lists only the current client's real durations and percentages. The **AH cut** setting switches between faction (5%) and neutral (15%) houses; neutral also multiplies the deposit by 5.
 
 If TSM sell rate is **fallback** (unknown), mode is forced to `if_sold` so a 50% guess does not haircut payout.
 
@@ -190,7 +226,7 @@ The valuation gold thresholds are **per client** (see **Client profiles** above)
 | Min sell rate | 0.10 |
 | Fallback sell rate | 0.50 |
 | Subtract expected AH deposit | on |
-| Deposit preset | 24h / 30% (TBC) — 8h / 20% (Era) |
+| Deposit preset | 24h / 30% (TBC & Forever) — 8h / 20% (Era) |
 | AH cut | Faction (5%) — neutral (15%) optional |
 | AH value mode | If sold |
 | Seconds before g/h | 30 |

@@ -92,22 +92,16 @@ GT.SMELT = {
 }
 
 -- True if this character has the Mining profession (spell 2575), cached like
--- GT.CanDisenchant. Mirrors the Enchanting detection (GetSpellInfo(7411)) and is
--- client-agnostic.
+-- GT.CanDisenchant. Delegates to the compat layer, which tries the spellbook,
+-- then the retail profession API (GetProfessions/GetProfessionInfo) and finally
+-- the Classic skill-line walk -- so detection works on Era and TBC Anniversary
+-- (skill lines) and on Forever (which has no skill lines at all).
 local mineCached, mineAt = nil, 0
 function GT.CanMining()
   local now = GetTime()
   if mineCached ~= nil and (now - mineAt) < 30 then return mineCached end
-  local yes = false
-  if GetSpellInfo and GetNumSkillLines and GetSkillLineInfo then
-    local mineName = GetSpellInfo(2575)
-    if mineName then
-      for i = 1, GetNumSkillLines() do
-        local name = GetSkillLineInfo(i)
-        if name == mineName then yes = true; break end
-      end
-    end
-  end
+  local api = GT.Api
+  local yes = (api and api.KnowsProfession and api.KnowsProfession(2575)) or false
   mineCached, mineAt = yes, now
   return yes
 end
@@ -187,14 +181,15 @@ end
 -- Cheap and one-shot: GT.SMELT has a handful of entries. Returns the number of
 -- bars requested (0 when not a miner, so nothing is fetched needlessly).
 function GT.SmeltPrefetch()
-  if not (GT.SMELT and GetItemInfo) then return 0 end
+  local api = GT.Api
+  if not (GT.SMELT and api and api.hasItemInfo and api.GetItemInfo) then return 0 end
   if not (GT.CanMining and GT.CanMining()) then return 0 end
   local n = 0
   for _, s in pairs(GT.SMELT) do
     if s.barID then
       -- Return value deliberately ignored: nil just means "not cached yet, fetch
       -- started", and GT.Events.OnItemInfo re-runs the comparison when it lands.
-      GetItemInfo(s.barID)
+      api.GetItemInfo(s.barID)
       n = n + 1
     end
   end

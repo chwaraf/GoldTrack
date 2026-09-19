@@ -6,7 +6,7 @@ local GetTime, time, floor = GetTime, time, math.floor
 local UnitIsAFK = UnitIsAFK
 
 GT.ADDON = "GoldTrack"
-GT.VERSION = "1.1.0" -- authoritative; Version.lua also sets/keeps this in sync
+GT.VERSION = "1.2.0" -- authoritative; Version.lua also sets/keeps this in sync
 
 -- Caps (memory)
 GT.PRICE_CACHE_TTL = 30
@@ -290,9 +290,88 @@ function GT.OnAFK(isAFK)
   end
 end
 
+-- WoW: Forever SavedVariables workaround -------------------------------------
+-- The Forever (Camelot) beta writes SavedVariables on exit but does not read the
+-- ACCOUNT-wide table back -- a client bug, independently confirmed by several
+-- addon authors during the September 2026 beta. PER-CHARACTER tables do come
+-- back. GoldTrack's ledger already lives in per-character GoldTrackCharDB, so
+-- sessions, rows and archives survive; only the account-wide GoldTrackDB
+-- (thresholds, HUD position/scale, price source, toggles) would reset on every
+-- login. So on Forever, and only there, mirror the account config into the
+-- per-character table and restore it when the account table comes back empty.
+--
+-- The restore self-disables the moment Blizzard fixes the bug: a correctly
+-- restored GoldTrackDB has gameVersionKnown set, which is the marker this uses
+-- to tell "the client handed my data back" from "the client handed me nil".
+GT.CFG_MIRROR = "__cfgMirror"
+
+-- Snapshot GoldTrackDB into the per-character table. Cheap (a few dozen keys)
+-- and inert on every other client.
+function GT.SaveCfgMirror()
+  if not (GT.IsForever and GT.IsForever()) then return end
+  if type(GoldTrackCharDB) ~= "table" or type(GoldTrackDB) ~= "table" then return end
+  local m = {}
+  for k, v in pairs(GoldTrackDB) do
+    if type(v) ~= "function" then
+      m[k] = (type(v) == "table") and deepcopy(v) or v
+    end
+  end
+  -- Mutate in place when a mirror already exists, for the same reason the wipe
+  -- does: the client serializes the table it captured, not a replacement.
+  local old = GoldTrackCharDB[GT.CFG_MIRROR]
+  if type(old) == "table" then
+    wipe(old)
+    for k, v in pairs(m) do old[k] = v end
+  else
+    GoldTrackCharDB[GT.CFG_MIRROR] = m
+  end
+end
+
+-- Put the mirror back into GoldTrackDB when the account table arrived empty.
+-- Returns true when it restored anything.
+function GT.RestoreCfgMirror()
+  if not (GT.IsForever and GT.IsForever()) then return false end
+  if type(GoldTrackCharDB) ~= "table" or type(GoldTrackDB) ~= "table" then return false end
+  local m = GoldTrackCharDB[GT.CFG_MIRROR]
+  if type(m) ~= "table" then return false end
+  -- A restored account DB always has this marker (set on the very first run), so
+  -- its absence means the client gave us nothing back.
+  if GoldTrackDB.gameVersionKnown then return false end
+  for k, v in pairs(m) do
+    GoldTrackDB[k] = (type(v) == "table") and deepcopy(v) or v
+  end
+  return true
+end
+
+-- Forever only: refresh the mirror periodically. Settings the UI writes straight
+-- into GoldTrackDB (HUD position/scale, toggles) are otherwise captured only on
+-- zone change or logout, so a crash would lose them. One deepcopy of a few dozen
+-- keys a minute is noise next to the 1s HUD tick.
+function GT.StartCfgMirrorTicker()
+  if GT._cfgMirrorTicker then return end
+  GT._cfgMirrorTicker = true
+  local function tick()
+    if not GT._cfgMirrorTicker then return end
+    GT.SaveCfgMirror()
+    GT.After(60, tick)
+  end
+  GT.After(60, tick)
+end
+
+-- One-line explanation, printed once per session on Forever only, so a player who
+-- notices their thresholds moved understands it is the client and not the addon.
+function GT.NotifyForeverSavedVars()
+  if GT._foreverSvNotified then return end
+  GT._foreverSvNotified = true
+  GT.Print("Forever beta: this client does not read account-wide SavedVariables back. "
+    .. "GoldTrack mirrors its settings into this character, and sessions/history are "
+    .. "per-character, so nothing is lost. This goes away when Blizzard fixes the client.")
+end
+
 function GT.OnLeavingWorld()
   GT.FoldSegment()
   GoldTrackCharDB.session.leavingAt = time()
+  GT.SaveCfgMirror()
 end
 
 function GT.OnLogout()
@@ -300,11 +379,16 @@ function GT.OnLogout()
   -- ADDON_LOADED uses leavingAt gap: short = reload (keep RUNNING), long = real logout.
   GT.FoldSegment()
   GoldTrackCharDB.session.leavingAt = time()
+  GT.SaveCfgMirror()
 end
 
 function GT.OnAddonLoaded()
   if type(GoldTrackDB) ~= "table" then GoldTrackDB = {} end
   if type(GoldTrackCharDB) ~= "table" then GoldTrackCharDB = {} end
+  -- Forever only: recover the account config from the per-character mirror before
+  -- defaults are merged in, so restored values win over them (merge only fills
+  -- keys that are still nil). A no-op on every other client.
+  GT.RestoreCfgMirror()
   merge(GoldTrackDB, deepcopy(GT.defaults))
   merge(GoldTrackCharDB, deepcopy(GT.charDefaults))
   if (GoldTrackDB.uiRev or 0) < 2 then
@@ -349,6 +433,8 @@ function GT.OnAddonLoaded()
   end
   if not s.rows then s.rows = {} end
   if not s.order then s.order = {} end
+  -- Forever only: re-arm the mirror now that defaults/migrations have settled.
+  GT.SaveCfgMirror()
 end
 
 function GT.OnEnteringWorld()
@@ -480,7 +566,19 @@ StaticPopupDialogs["GOLDTRACK_WIPE"] = {
   OnAccept = function(self)
     local box = self.editBox or _G[self:GetName() .. "EditBox"]
     if box and box:GetText() == "DELETE" then
-      GoldTrackCharDB = deepcopy(GT.charDefaults)
+      -- Wipe by MUTATING the SavedVariables table in place instead of assigning a
+      -- fresh one. The client serializes the table it captured when it restored
+      -- saved variables, so replacing the global can leave it writing the OLD
+      -- table (this is precisely how Forever's persistence experiments went
+      -- wrong for other authors). Equivalent on every client.
+      if type(GoldTrackCharDB) ~= "table" then GoldTrackCharDB = {} end
+      -- The mirror holds ACCOUNT config, not character data: a ledger wipe must
+      -- not throw the player's settings away with it (relevant on Forever, where
+      -- the mirror is the only thing that survives a login).
+      local keepMirror = GoldTrackCharDB[GT.CFG_MIRROR]
+      wipe(GoldTrackCharDB)
+      merge(GoldTrackCharDB, deepcopy(GT.charDefaults))
+      if type(keepMirror) == "table" then GoldTrackCharDB[GT.CFG_MIRROR] = keepMirror end
       GT.segmentStart = nil
       GT.Print("character data wiped")
       GT.RefreshHUD()
@@ -530,6 +628,12 @@ boot:SetScript("OnEvent", function(_, event, arg1)
     GT.After(20, function() GT.RefreshTSMRows(true) end)
     GT.After(2, prefetchSmeltBars)
     GT.After(20, prefetchSmeltBars)
+    -- Forever (Camelot) only: keep the config mirror fresh and explain the
+    -- client's SavedVariables bug once. Both are no-ops elsewhere.
+    if GT.IsForever and GT.IsForever() then
+      GT.StartCfgMirrorTicker()
+      GT.NotifyForeverSavedVars()
+    end
   elseif event == "PLAYER_ENTERING_WORLD" then
     GT.OnEnteringWorld()
   elseif event == "PLAYER_LEAVING_WORLD" then
@@ -601,8 +705,11 @@ function GT.AddonsOn()
   local tsm = not not ((TSM_API and TSM_API.GetCustomPriceValue) or TSMAPI or TSMAPI_FOUR)
   local atr = not not ((Auctionator and Auctionator.API and Auctionator.API.v1) or Atr_GetAuctionBuyout or Atr_GetAuctionPrice)
   local nit = not not (_G.NIT)
-  if not nit and IsAddOnLoaded then
-    nit = not not (IsAddOnLoaded("NovaInstanceTracker") or IsAddOnLoaded("NovaInstanceTracker-TBC"))
+  -- IsAddOnLoaded is gone on the Forever (retail-API) client; the compat layer
+  -- resolves it to C_AddOns.IsAddOnLoaded there.
+  local isLoaded = GT.Api and GT.Api.IsAddOnLoaded
+  if not nit and isLoaded then
+    nit = not not (isLoaded("NovaInstanceTracker") or isLoaded("NovaInstanceTracker-TBC"))
   end
   addonsAt, addonsT, addonsA, addonsN = now, tsm, atr, nit
   return tsm, atr, nit
@@ -662,18 +769,18 @@ function GT.CanDisenchant()
   local now = GetTime()
   if encCached ~= nil and (now - encAt) < 30 then return encCached end
   local yes = false
+  -- Knowing Disenchant itself is the strongest signal and exists on every client
+  -- this addon supports.
   if IsSpellKnown and IsSpellKnown(13262) then
     yes = true
   elseif IsPlayerSpell and IsPlayerSpell(13262) then
     yes = true
-  elseif GetSpellInfo and GetNumSkillLines and GetSkillLineInfo then
-    local encName = GetSpellInfo(7411) -- Enchanting
-    if encName then
-      for i = 1, GetNumSkillLines() do
-        local name = GetSkillLineInfo(i)
-        if name == encName then yes = true; break end
-      end
-    end
+  else
+    -- Otherwise fall back to Enchanting (7411) profession membership, via the
+    -- compat layer: retail profession API on Forever, Classic skill lines on
+    -- Era/TBC Anniversary.
+    local api = GT.Api
+    yes = (api and api.KnowsProfession and api.KnowsProfession(7411)) or false
   end
   encCached, encAt = yes, now
   return yes
