@@ -14,6 +14,8 @@ The addon auto-detects which client it is running on (`Forever.lua` load flag fi
 
 Optional: **Auctionator** and/or **TradeSkillMaster**. Without them, only vendor prices are used. Region sell rates need the **TSM Desktop App + Anniversary AppHelper**, not just the in-game addon.
 
+On Forever specifically: **Auctionator ships a Forever build** (release 337, 2026-09-17, game version 1.60.1), so AH prices work there. **TSM has no Forever release yet** — its CurseForge page still lists only Retail/MoP/Classic/Classic TBC — so until it does, Forever gets Auctionator-then-vendor pricing and no TSM sell rate. GoldTrack detects both by API shape rather than by client, so a TSM Forever build would be picked up with no change here.
+
 No Ace3.
 
 ---
