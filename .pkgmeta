@@ -1,0 +1,11 @@
+# CurseForge packaging metadata.
+#
+# The only thing this changes is what gets left OUT of the distributed archive:
+# `tests/` is a development harness that boots the addon under a Lua mock on
+# CI/locally. The client never loads it (it is not listed in either TOC), so
+# shipping it would just add dead weight and confusing files to the addon folder.
+#
+# `package-as` is deliberately omitted so the archive keeps its default name.
+
+ignore:
+  - tests

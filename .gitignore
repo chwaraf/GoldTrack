@@ -1,0 +1,3 @@
+# Python bytecode from the test harness
+__pycache__/
+*.py[cod]
