@@ -790,7 +790,11 @@ function GT.UI.HUDMenu()
     m._life = 0
     m:SetScript("OnUpdate", function(self, elapsed)
       if not self:IsShown() then return end
-      if MouseIsOver(self) then
+      -- Through the compat layer: the MouseIsOver GLOBAL was removed on the
+      -- retail API (moved to InputUtil.IsMouseOver in 12.1.0), so calling it
+      -- bare here threw on every frame on Forever. This handler runs ~60x/sec
+      -- while the menu is open, so an error in it is not a one-off.
+      if GT.Api.MouseIsOver(self) then
         self._life = 0
         return
       end

@@ -137,6 +137,29 @@ function GT.Api.RegisterEvent(frame, event)
   return ok and true or false
 end
 
+-- UI helpers ----------------------------------------------------------------
+-- Is the mouse over this region?
+--
+-- The FrameXML GLOBAL MouseIsOver(frame) was moved to InputUtil.IsMouseOver in
+-- retail 12.1.0 (Midnight), and Forever runs the 12.1.5-era API, so the global
+-- is nil there. GoldTrack called it bare inside the HUD context menu's OnUpdate,
+-- which made right-clicking the HUD throw once per frame (~633 errors in one
+-- sitting) on Forever while working fine on Classic.
+--
+-- The ScriptRegion METHOD IsMouseOver() has existed since patch 3.3.0 -- the
+-- wiki documents it as the replacement for the global -- and is present on
+-- Classic Era, TBC Anniversary and Forever alike, so prefer it. Same semantics:
+-- a pure geometry test that is true even for hidden regions and regions with
+-- EnableMouse(false).
+function GT.Api.MouseIsOver(region)
+  if not region then return false end
+  if type(region.IsMouseOver) == "function" then return region:IsMouseOver() and true or false end
+  if type(MouseIsOver) == "function" then return MouseIsOver(region) and true or false end
+  local iu = _G.InputUtil
+  if iu and type(iu.IsMouseOver) == "function" then return iu.IsMouseOver(region) and true or false end
+  return false
+end
+
 -- True when the client lacks the Classic globals this addon was written for,
 -- i.e. we are on the retail API (Forever, or actual retail). Used for messaging
 -- only; behaviour is decided per-API by the resolvers above.

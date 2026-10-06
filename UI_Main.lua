@@ -11,6 +11,43 @@ local lootHideZero = false
 local lootFilter = ""
 local currentTab = "session"
 
+-- FauxScrollFrame_* are FrameXML helpers, not part of the documented widget API.
+-- They ship on the Classic clients and on retail today, but they are exactly the
+-- kind of legacy global a retail-engine client can drop: the HUD context menu
+-- broke on Forever because the MouseIsOver GLOBAL was moved to InputUtil in
+-- 12.1.0. These run on every list refresh, so a missing one would error
+-- continuously rather than once. Degrade to a non-scrolling list (first page
+-- only) and say so in the debug log instead.
+local fauxWarned = false
+local function fauxMissing(what)
+  if not fauxWarned then
+    fauxWarned = true
+    GT.Log("%s is unavailable on this client; lists show their first page only", what)
+  end
+end
+local function fauxUpdate(frame, n, visible, rowH)
+  if type(FauxScrollFrame_Update) == "function" then
+    FauxScrollFrame_Update(frame, n, visible, rowH)
+  else
+    fauxMissing("FauxScrollFrame_Update")
+  end
+end
+local function fauxOffset(frame)
+  if type(FauxScrollFrame_GetOffset) == "function" then
+    return FauxScrollFrame_GetOffset(frame) or 0
+  end
+  fauxMissing("FauxScrollFrame_GetOffset")
+  return 0
+end
+local function fauxVScroll(frame, offset, rowH, updateFn)
+  if type(FauxScrollFrame_OnVerticalScroll) == "function" then
+    FauxScrollFrame_OnVerticalScroll(frame, offset, rowH, updateFn)
+  else
+    fauxMissing("FauxScrollFrame_OnVerticalScroll")
+    if type(updateFn) == "function" then updateFn() end
+  end
+end
+
 -- Value inspector ------------------------------------------------------------
 -- Prints every price source + the final valuation for one item to chat.
 function GT.UI.PrintValuation(link)
@@ -468,7 +505,7 @@ function GT.UI.BuildMain()
     p.scroll:SetPoint("TOPLEFT", 2, -50)
     p.scroll:SetPoint("BOTTOMRIGHT", -28, 4)
     p.scroll:SetScript("OnVerticalScroll", function(self, off)
-      FauxScrollFrame_OnVerticalScroll(self, off, 20, GT.UI.UpdateLoot)
+      fauxVScroll(self, off, 20, GT.UI.UpdateLoot)
     end)
 
     for i = 1, LOOT_VISIBLE do
@@ -890,7 +927,7 @@ function GT.UI.BuildHistory()
     f.arch[i] = r
   end
   f.list:SetScript("OnVerticalScroll", function(self, off)
-    FauxScrollFrame_OnVerticalScroll(self, off, 18, GT.UI.UpdateArchive)
+    fauxVScroll(self, off, 18, GT.UI.UpdateArchive)
   end)
   f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisable")
   f.empty:SetPoint("CENTER", f.list, "CENTER")
@@ -906,8 +943,8 @@ function GT.UI.UpdateArchive()
   local arch = GoldTrackCharDB.total.archives or {}
   local n = #arch
   local vis = histWin.ARCH_N or 14
-  FauxScrollFrame_Update(histWin.list, n, vis, 18)
-  local off = FauxScrollFrame_GetOffset(histWin.list)
+  fauxUpdate(histWin.list, n, vis, 18)
+  local off = fauxOffset(histWin.list)
   for i = 1, vis do
     local idx = n - off - i + 1
     local r = histWin.arch[i]
@@ -950,8 +987,8 @@ function GT.UI.UpdateLoot()
       end
     end
   end
-  FauxScrollFrame_Update(p.scroll, n, LOOT_VISIBLE, 20)
-  local off = FauxScrollFrame_GetOffset(p.scroll)
+  fauxUpdate(p.scroll, n, LOOT_VISIBLE, 20)
+  local off = fauxOffset(p.scroll)
   for i = 1, LOOT_VISIBLE do
     local row = shown[off + i]
     local r = lootRows[i]
