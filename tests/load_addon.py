@@ -32,12 +32,20 @@ def toc_files(toc_name):
     return files
 
 
-def boot(mode="classic"):
-    """Load the addon into a fresh mock client. Returns (lua, files)."""
+def boot(mode="classic", overrides=None):
+    """Load the addon into a fresh mock client. Returns (lua, files).
+
+    `overrides` sets Lua globals BEFORE the mock is evaluated, which is how a
+    test flips a modelling assumption -- e.g. boot("forever",
+    {"FOREVER_FAUX": "true"}) to model a Forever client that does still ship the
+    legacy FauxScrollFrame helpers. See mock_setup.lua for why that is a flag.
+    """
     if mode not in ("classic", "forever"):
         raise ValueError("mode must be 'classic' or 'forever'")
     lua = lupa.LuaRuntime()
     lua.execute("FOREVER = %s" % ("true" if mode == "forever" else "false"))
+    for name, value in (overrides or {}).items():
+        lua.execute("%s = %s" % (name, value))
     lua.execute(open(os.path.join(HERE, "mock_setup.lua"), encoding="utf-8").read())
 
     toc = "GoldTrack_Camelot.toc" if mode == "forever" else "GoldTrack.toc"

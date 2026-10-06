@@ -28,8 +28,12 @@ Modelled deliberately, because each one caught (or would have caught) a real bug
     traceback confirms it, since GoldTrackCtx carried backdropInfo and NineSlice
     textures. Giving every widget SetBackdrop would hide GT.UI.Backdrop's
     texture-fallback branch from testing.
-  * FauxScrollFrame_* are present, and a test nils them out to prove the Loot and
-    History lists degrade to their first page instead of erroring per refresh.
+  * FauxScrollFrame_* exist only in Classic mode, because a survey of Blizzard's
+    own manifests found no FauxScrollFrame.lua on either the `forever` or the
+    retail-12.1.0 branch. Forever therefore exercises the degraded list path by
+    default; a test additionally nils the helpers out under Classic to prove the
+    same path is safe on a client that has them. See the definition site for the
+    evidence and for the FOREVER_FAUX override.
 ]]
 
 FOREVER = FOREVER or false
@@ -182,16 +186,32 @@ else
   function MouseIsOver(r) return r and r._mouseOver == true end
 end
 
--- Legacy FrameXML list helpers: present on Classic and on retail today. A test
--- nils them out to prove GoldTrack degrades instead of erroring every refresh.
-function FauxScrollFrame_Update(frame, n, visible, rowH)
-  FAUX_CALLS = FAUX_CALLS + 1
-  frame._fauxItems, frame._fauxVisible, frame._fauxRowH = n, visible, rowH
-end
-function FauxScrollFrame_GetOffset(frame) return FAUX_OFFSET end
-function FauxScrollFrame_OnVerticalScroll(frame, offset, rowH, fn)
-  FAUX_OFFSET = floor((offset or 0) / (rowH or 1) + 0.5)
-  if fn then fn() end
+-- Legacy FrameXML list helpers. Surveyed against Blizzard's own UI source
+-- (Gethe/wow-ui-source): FauxScrollFrame.lua is listed in NONE of the manifests
+-- read in full -- `forever` branch Blizzard_SharedXML.toc and
+-- Blizzard_FrameXML.toc, retail-12.1.0 Blizzard_FrameXML.toc,
+-- Blizzard_FrameXMLBase_Mainline.toc, Blizzard_UIPanelTemplates_Mainline.toc and
+-- Blizzard_SharedXML.toc -- while HybridScrollFrame.lua IS retained there under
+-- the comment "HybridScrollFrame is deprecated. Retained only for addons and
+-- legacy content". Blizzard kept one legacy scroll helper for addons and not
+-- this one, so Forever is modelled WITHOUT them. That is what makes GoldTrack's
+-- guards load-bearing instead of dormant: on Forever the Loot and History lists
+-- take the degraded first-page path.
+--
+-- This is strong negative evidence, not proof -- ~250 addons exist and not every
+-- manifest was read. Model the opposite with boot("forever", {"FOREVER_FAUX":
+-- "true"}) once checked in game via:  /run print(tostring(FauxScrollFrame_Update))
+FOREVER_FAUX = FOREVER_FAUX or false
+if not FOREVER or FOREVER_FAUX then
+  function FauxScrollFrame_Update(frame, n, visible, rowH)
+    FAUX_CALLS = FAUX_CALLS + 1
+    frame._fauxItems, frame._fauxVisible, frame._fauxRowH = n, visible, rowH
+  end
+  function FauxScrollFrame_GetOffset(frame) return FAUX_OFFSET end
+  function FauxScrollFrame_OnVerticalScroll(frame, offset, rowH, fn)
+    FAUX_OFFSET = floor((offset or 0) / (rowH or 1) + 0.5)
+    if fn then fn() end
+  end
 end
 
 -- ------------------------------------------------------------- events per client

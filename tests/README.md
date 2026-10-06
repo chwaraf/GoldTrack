@@ -9,7 +9,7 @@ python3 -m venv /tmp/gt && /tmp/gt/bin/pip install lupa
 /tmp/gt/bin/python tests/run_tests.py
 ```
 
-Exit code is non-zero if any check fails. 124 checks at the time of writing.
+Exit code is non-zero if any check fails. 130 checks at the time of writing.
 
 ## Why this exists
 
@@ -57,8 +57,9 @@ modelled explicitly, because each one caught (or would have caught) a real bug:
 | `BAG_UPDATE` | present | **absent** (removed retail 10.0) |
 | `LOOT_READY` | absent | present |
 | `RegisterEvent` of an unknown name | — | **throws**, as the real client does |
+| `FauxScrollFrame_*` list helpers | present | **absent** (see below) |
 
-Two details worth knowing before editing the mock:
+Three details worth knowing before editing the mock:
 
 - `SetBackdrop` comes from `BackdropTemplateMixin`, not the base widget API, so
   only frames created *with* `"BackdropTemplate"` have it. That is what makes the
@@ -68,6 +69,17 @@ Two details worth knowing before editing the mock:
   `GoldTrackCtx` carried `backdropInfo` and NineSlice textures.
 - `RegisterEvent` throwing is deliberate. Without it the pcall guard in
   `GT.Api.RegisterEvent` would pass tests while being useless in game.
+- `FauxScrollFrame_*` are modelled as **absent on Forever**, because a survey of
+  Blizzard's own UI source (`Gethe/wow-ui-source`) found `FauxScrollFrame.lua` in
+  none of the manifests read in full on the `forever` branch or on retail
+  12.1.0 — while `HybridScrollFrame.lua` *is* kept there, under the comment
+  *"Retained only for addons and legacy content"*. So Forever's degraded
+  first-page path is exercised as the **normal** path, not as a synthetic
+  failure. That survey is strong negative evidence rather than proof (~250 addons
+  exist; not every manifest was read), so the assumption is a flag:
+  `boot("forever", {"FOREVER_FAUX": "true"})` models the opposite and is asserted
+  in `test_hud_menu.py`. Settle it in game with
+  `/run print(tostring(FauxScrollFrame_Update))`.
 
 ## Writing a check
 

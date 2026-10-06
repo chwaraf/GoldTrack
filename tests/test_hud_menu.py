@@ -132,40 +132,76 @@ def run(s):
                 "true")
 
         s.section("%s — scroll lists (FauxScrollFrame_*)" % mode.upper())
-        L.exec("Populate()")
-        L.exec("FAUX_CALLS = 0; FAUX_OFFSET = 0")
-        s.no_throw("refresh both lists", lambda: lua.execute(
-            "GT.UI.UpdateLoot(); if GT.UI.UpdateArchive then GT.UI.UpdateArchive() end"))
-        s.check("FauxScrollFrame_Update was used", ev("tostring(FAUX_CALLS > 0)"), "true")
-        s.check("loot list got its item count", ev(
-            "tostring(FindFrame('GoldTrackLootScroll')._fauxItems)"), 40)
-        s.check("archive list got its item count", ev(
-            "tostring(FindFrame('GoldTrackArchScroll')._fauxItems)"), 30)
-        s.no_throw("scroll 100px", lambda: ev(
-            "FindFrame('GoldTrackLootScroll'):GetScript('OnVerticalScroll')"
-            "(FindFrame('GoldTrackLootScroll'), 100)"))
-        s.check("offset is 5 rows at 20px each", ev("tostring(FAUX_OFFSET)"), 5)
 
-        # Now take the legacy helpers away, as a retail-engine client could.
-        L.exec("FauxScrollFrame_Update = nil; FauxScrollFrame_GetOffset = nil;"
-                    " FauxScrollFrame_OnVerticalScroll = nil")
-        L.exec("LOGS = {}")
-        calls_before = ev("FAUX_CALLS")
-
-        # The warning must fire exactly ONCE, not once per refresh: these lists
-        # redraw on every loot event, so a per-refresh warning would be the same
-        # kind of spam as the OnUpdate crash this file exists to prevent.
+        # Forever is modelled without these helpers; see mock_setup.lua for the
+        # manifest survey behind that and for the FOREVER_FAUX override.
+        faux_present = (mode == "classic")
         warn_count = (
             "tostring((function() local n=0 for _,m in ipairs(LOGS) do "
             "if m:find('unavailable on this client', 1, true) then n=n+1 end end return n end)())")
+        refresh = ("GT.UI.UpdateLoot(); "
+                   "if GT.UI.UpdateArchive then GT.UI.UpdateArchive() end")
+        scroll_by = ("FindFrame('GoldTrackLootScroll'):GetScript('OnVerticalScroll')"
+                     "(FindFrame('GoldTrackLootScroll'), 100)")
 
-        s.no_throw("scroll handler still safe without them", lambda: ev(
-            "FindFrame('GoldTrackLootScroll'):GetScript('OnVerticalScroll')"
-            "(FindFrame('GoldTrackLootScroll'), 100)"))
-        s.check("warned once via GT.Log", ev(warn_count), 1)
-        s.no_throw("lists still refresh without them", lambda: lua.execute(
-            "GT.UI.UpdateLoot(); if GT.UI.UpdateArchive then GT.UI.UpdateArchive() end"))
-        s.no_throw("and refresh again", lambda: lua.execute(
-            "GT.UI.UpdateLoot(); if GT.UI.UpdateArchive then GT.UI.UpdateArchive() end"))
-        s.check("no helper calls remain possible", ev("tostring(FAUX_CALLS)"), calls_before)
-        s.check("did not warn again (no spam)", ev(warn_count), 1)
+        lua.execute("LOGS = {}")
+        ev("Populate()")
+        lua.execute("FAUX_CALLS = 0; FAUX_OFFSET = 0")
+        s.check("helpers present as modelled", ev(
+            "tostring(type(FauxScrollFrame_Update) == 'function')"),
+            "true" if faux_present else "false")
+        s.no_throw("refresh both lists", lambda: lua.execute(refresh))
+        s.check("lists still on screen", ev(
+            "tostring(FindFrame('GoldTrackLootScroll'):IsShown())"), "true")
+
+        if faux_present:
+            s.check("FauxScrollFrame_Update was used", ev("tostring(FAUX_CALLS > 0)"), "true")
+            s.check("loot list got its item count", ev(
+                "tostring(FindFrame('GoldTrackLootScroll')._fauxItems)"), 40)
+            s.check("archive list got its item count", ev(
+                "tostring(FindFrame('GoldTrackArchScroll')._fauxItems)"), 30)
+            s.no_throw("scroll 100px", lambda: ev(scroll_by))
+            s.check("offset is 5 rows at 20px each", ev("tostring(FAUX_OFFSET)"), 5)
+        else:
+            # The degraded path is Forever's NORMAL path, so it must be silent
+            # after one warning and must never throw on a per-refresh hot path.
+            s.check("no helper calls possible", ev("tostring(FAUX_CALLS)"), 0)
+            s.no_throw("scroll handler is safe", lambda: ev(scroll_by))
+            s.check("offset stays on the first page", ev("tostring(FAUX_OFFSET)"), 0)
+            s.check("warned once via GT.Log", ev(warn_count), 1)
+
+        # Under Classic the helpers exist, so take them away to prove the same
+        # degraded path is safe on a client that normally has them.
+        lua.execute("FauxScrollFrame_Update = nil; FauxScrollFrame_GetOffset = nil;"
+                    " FauxScrollFrame_OnVerticalScroll = nil")
+        if faux_present:
+            lua.execute("LOGS = {}")
+            calls_before = ev("FAUX_CALLS")
+            s.no_throw("scroll handler still safe without them", lambda: ev(scroll_by))
+            s.check("warned once via GT.Log", ev(warn_count), 1)
+        s.no_throw("lists still refresh without them", lambda: lua.execute(refresh))
+        s.no_throw("and refresh again", lambda: lua.execute(refresh))
+        if faux_present:
+            s.check("no helper calls remain possible", ev("tostring(FAUX_CALLS)"), calls_before)
+            # Once, not once per refresh: these lists redraw on every loot event,
+            # so a per-refresh warning would be the same kind of spam as the
+            # OnUpdate crash this file exists to prevent.
+            s.check("did not warn again (no spam)", ev(warn_count), 1)
+        else:
+            s.check("did not warn again (no spam)", ev(warn_count), 1)
+
+        # And the override that models a Forever client which DOES ship them.
+        if not faux_present:
+            lua2, _ = boot("forever", {"FOREVER_FAUX": "true"})
+            lua2.execute(SETUP)
+            ev2 = lua2.eval
+            s.check("FOREVER_FAUX override restores them", ev2(
+                "tostring(type(FauxScrollFrame_Update) == 'function')"), "true")
+            lua2.execute("LOGS = {}; FAUX_CALLS = 0; FAUX_OFFSET = 0")
+            lua2.execute("Populate()")
+            s.no_throw("lists paginate again", lambda: lua2.execute(refresh))
+            s.check("loot list got its item count", ev2(
+                "tostring(FindFrame('GoldTrackLootScroll')._fauxItems)"), 40)
+            s.no_throw("scroll 100px", lambda: lua2.execute(scroll_by))
+            s.check("paginated offset is 5", ev2("tostring(FAUX_OFFSET)"), 5)
+            s.check("no degradation warning at all", ev2(warn_count), 0)
