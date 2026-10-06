@@ -54,6 +54,24 @@ function MenuLabels()
 end
 function ClickMenu(i) GT.UI.ctx[i]:Click() end
 
+-- Probes for UI_Main's self-contained pagination fallback. Its state lives on the
+-- scroll frame, and FirstRowName reads what was actually DRAWN, so a test can
+-- prove paging changes the rendered rows rather than only an offset variable.
+function GTOff(name) local f = FindFrame(name) return f and f._gtOff end
+function GTN(name) local f = FindFrame(name) return f and f._gtN end
+function BarOf(name) return FindFrame(name).ScrollBar end
+function FirstRowName()
+  local p = FindFrame('GoldTrackLootScroll')._parent
+  for _, k in ipairs(p._kids or {}) do
+    if k.name and k.name.GetText then return tostring(k.name:GetText()) end
+  end
+  return 'none'
+end
+function ScrollLootBy(px)
+  FindFrame('GoldTrackLootScroll'):GetScript('OnVerticalScroll')(
+    FindFrame('GoldTrackLootScroll'), px)
+end
+
 -- Enough rows to paginate both lists.
 function Populate()
   for i = 1, 40 do
@@ -131,66 +149,80 @@ def run(s):
         s.check("Config opens the main window", ev("tostring(FindFrame('GoldTrackMain'):IsShown())"),
                 "true")
 
-        s.section("%s — scroll lists (FauxScrollFrame_*)" % mode.upper())
+        s.section("%s — scroll lists" % mode.upper())
 
-        # Forever is modelled without these helpers; see mock_setup.lua for the
-        # manifest survey behind that and for the FOREVER_FAUX override.
+        # Forever is modelled without the Blizzard helpers; see mock_setup.lua for
+        # the manifest survey behind that and for the FOREVER_FAUX override.
         faux_present = (mode == "classic")
-        warn_count = (
+        note_count = (
             "tostring((function() local n=0 for _,m in ipairs(LOGS) do "
-            "if m:find('unavailable on this client', 1, true) then n=n+1 end end return n end)())")
+            "if m:find('built-in list pagination', 1, true) then n=n+1 end end return n end)())")
         refresh = ("GT.UI.UpdateLoot(); "
                    "if GT.UI.UpdateArchive then GT.UI.UpdateArchive() end")
-        scroll_by = ("FindFrame('GoldTrackLootScroll'):GetScript('OnVerticalScroll')"
-                     "(FindFrame('GoldTrackLootScroll'), 100)")
+        off_probe = ("tostring(FAUX_OFFSET)" if faux_present
+                     else "tostring(GTOff('GoldTrackLootScroll'))")
 
-        lua.execute("LOGS = {}")
+        # fauxNote() fires while the window is built, i.e. during SETUP, so read
+        # the count before the log is cleared for the rest of the section.
+        note_at_build = ev(note_count)
+        lua.execute("LOGS = {}; FAUX_CALLS = 0; FAUX_OFFSET = 0")
         ev("Populate()")
         lua.execute("FAUX_CALLS = 0; FAUX_OFFSET = 0")
-        s.check("helpers present as modelled", ev(
+        s.check("Blizzard helpers present as modelled", ev(
             "tostring(type(FauxScrollFrame_Update) == 'function')"),
             "true" if faux_present else "false")
         s.no_throw("refresh both lists", lambda: lua.execute(refresh))
-        s.check("lists still on screen", ev(
-            "tostring(FindFrame('GoldTrackLootScroll'):IsShown())"), "true")
+        first_row = ev("FirstRowName()")
+        s.check("a row was drawn", "true" if first_row not in ("none", "nil") else first_row, "true")
+
+        s.no_throw("scroll 100px", lambda: ev("ScrollLootBy(100)"))
+        s.check("offset is 5 rows at 20px each", ev(off_probe), 5)
+        second_row = ev("FirstRowName()")
+        s.check("page 2 drew a different first row",
+                "changed" if second_row != first_row else "same:" + str(second_row), "changed")
 
         if faux_present:
-            s.check("FauxScrollFrame_Update was used", ev("tostring(FAUX_CALLS > 0)"), "true")
+            s.check("used the Blizzard helper", ev("tostring(FAUX_CALLS > 0)"), "true")
+            s.check("no fallback note needed", note_at_build, 0)
             s.check("loot list got its item count", ev(
                 "tostring(FindFrame('GoldTrackLootScroll')._fauxItems)"), 40)
             s.check("archive list got its item count", ev(
                 "tostring(FindFrame('GoldTrackArchScroll')._fauxItems)"), 30)
-            s.no_throw("scroll 100px", lambda: ev(scroll_by))
-            s.check("offset is 5 rows at 20px each", ev("tostring(FAUX_OFFSET)"), 5)
         else:
-            # The degraded path is Forever's NORMAL path, so it must be silent
-            # after one warning and must never throw on a per-refresh hot path.
-            s.check("no helper calls possible", ev("tostring(FAUX_CALLS)"), 0)
-            s.no_throw("scroll handler is safe", lambda: ev(scroll_by))
-            s.check("offset stays on the first page", ev("tostring(FAUX_OFFSET)"), 0)
-            s.check("warned once via GT.Log", ev(warn_count), 1)
+            # The fallback must reproduce the Blizzard helpers' behaviour exactly:
+            # same offset arithmetic, same bar range, bar hidden when it fits.
+            s.check("no Blizzard helper to call", ev("tostring(FAUX_CALLS)"), 0)
+            s.check("fallback noted once at build", note_at_build, 1)
+            s.check("fallback stored the item count", ev("tostring(GTN('GoldTrackLootScroll'))"), 40)
+            s.check("fallback drove the bar to 100px", ev(
+                "tostring(BarOf('GoldTrackLootScroll'):GetValue())"), 100)
+            s.check("bar range is 0..(40-14)*20", ev(
+                "tostring((function() local lo,hi = "
+                "BarOf('GoldTrackLootScroll'):GetMinMaxValues() "
+                "return lo..'-'..hi end)())"), "0-520")
+            s.check("bar shown while the list overflows", ev(
+                "tostring(BarOf('GoldTrackLootScroll'):IsShown())"), "true")
+            s.no_throw("scroll far past the end", lambda: ev("ScrollLootBy(99999)"))
+            s.check("offset clamps to the last page", ev(off_probe), 26)
+            s.no_throw("scroll back to the top", lambda: ev("ScrollLootBy(0)"))
+            s.check("offset returns to 0", ev(off_probe), 0)
+            s.check("bar snaps back with it", ev(
+                "tostring(BarOf('GoldTrackLootScroll'):GetValue())"), 0)
 
-        # Under Classic the helpers exist, so take them away to prove the same
-        # degraded path is safe on a client that normally has them.
-        lua.execute("FauxScrollFrame_Update = nil; FauxScrollFrame_GetOffset = nil;"
-                    " FauxScrollFrame_OnVerticalScroll = nil")
+        # Under Classic the helpers exist, so take them away mid-session and prove
+        # the fallback picks the list up rather than freezing it on page one.
         if faux_present:
-            lua.execute("LOGS = {}")
-            calls_before = ev("FAUX_CALLS")
-            s.no_throw("scroll handler still safe without them", lambda: ev(scroll_by))
-            s.check("warned once via GT.Log", ev(warn_count), 1)
-        s.no_throw("lists still refresh without them", lambda: lua.execute(refresh))
-        s.no_throw("and refresh again", lambda: lua.execute(refresh))
-        if faux_present:
-            s.check("no helper calls remain possible", ev("tostring(FAUX_CALLS)"), calls_before)
-            # Once, not once per refresh: these lists redraw on every loot event,
-            # so a per-refresh warning would be the same kind of spam as the
-            # OnUpdate crash this file exists to prevent.
-            s.check("did not warn again (no spam)", ev(warn_count), 1)
-        else:
-            s.check("did not warn again (no spam)", ev(warn_count), 1)
+            lua.execute("FauxScrollFrame_Update = nil; FauxScrollFrame_GetOffset = nil;"
+                        " FauxScrollFrame_OnVerticalScroll = nil")
+            s.no_throw("lists still refresh without them", lambda: lua.execute(refresh))
+            s.no_throw("scroll handler still safe without them", lambda: ev("ScrollLootBy(100)"))
+            s.check("fallback took over: offset 5", ev(
+                "tostring(GTOff('GoldTrackLootScroll'))"), 5)
+            s.no_throw("and refresh again", lambda: lua.execute(refresh))
+            s.check("rows still drawn after the switch", ev(
+                "tostring(FirstRowName() ~= 'none')"), "true")
 
-        # And the override that models a Forever client which DOES ship them.
+        # And the override modelling a Forever client that DOES ship the helpers.
         if not faux_present:
             lua2, _ = boot("forever", {"FOREVER_FAUX": "true"})
             lua2.execute(SETUP)
@@ -199,9 +231,38 @@ def run(s):
                 "tostring(type(FauxScrollFrame_Update) == 'function')"), "true")
             lua2.execute("LOGS = {}; FAUX_CALLS = 0; FAUX_OFFSET = 0")
             lua2.execute("Populate()")
-            s.no_throw("lists paginate again", lambda: lua2.execute(refresh))
+            s.no_throw("lists refresh", lambda: lua2.execute(refresh))
+            s.check("Blizzard helper used instead of the fallback", ev2(
+                "tostring(FAUX_CALLS > 0)"), "true")
             s.check("loot list got its item count", ev2(
                 "tostring(FindFrame('GoldTrackLootScroll')._fauxItems)"), 40)
-            s.no_throw("scroll 100px", lambda: lua2.execute(scroll_by))
-            s.check("paginated offset is 5", ev2("tostring(FAUX_OFFSET)"), 5)
-            s.check("no degradation warning at all", ev2(warn_count), 0)
+            s.no_throw("scroll 100px", lambda: lua2.execute("ScrollLootBy(100)"))
+            s.check("offset is 5 via the Blizzard helper", ev2("tostring(FAUX_OFFSET)"), 5)
+            s.check("no fallback note on that client", ev2(note_count), 0)
+
+            # Worst case for Forever: the helper functions AND the template are
+            # both gone, so CreateFrame errors and there is no scroll bar at all.
+            lua3, _ = boot("forever", {"NO_FAUX_TEMPLATE": "true"})
+            lua3.execute(SETUP)
+            ev3 = lua3.eval
+            s.check("CreateFrame survived the unknown template", ev3(
+                "tostring(FindFrame('GoldTrackLootScroll') ~= nil)"), "true")
+            s.check("no ScrollBar came with it", ev3(
+                "tostring(BarOf('GoldTrackLootScroll') == nil)"), "true")
+            s.check("mouse wheel enabled instead", ev3(
+                "tostring(FindFrame('GoldTrackLootScroll')._wheel)"), "true")
+            lua3.execute("LOGS = {}")
+            lua3.execute("Populate()")
+            s.no_throw("lists refresh with no bar", lambda: lua3.execute(refresh))
+            wheel_first = ev3("FirstRowName()")
+            s.no_throw("wheel down three rows", lambda: lua3.execute(
+                "FindFrame('GoldTrackLootScroll'):GetScript('OnMouseWheel')"
+                "(FindFrame('GoldTrackLootScroll'), -3)"))
+            s.check("wheel moved the offset by 3", ev3(
+                "tostring(GTOff('GoldTrackLootScroll'))"), 3)
+            s.check("wheel re-drew the rows",
+                    "changed" if ev3("FirstRowName()") != wheel_first else "same", "changed")
+            s.no_throw("wheel back up", lambda: lua3.execute(
+                "FindFrame('GoldTrackLootScroll'):GetScript('OnMouseWheel')"
+                "(FindFrame('GoldTrackLootScroll'), 3)"))
+            s.check("offset back to 0", ev3("tostring(GTOff('GoldTrackLootScroll'))"), 0)

@@ -11,40 +11,109 @@ local lootHideZero = false
 local lootFilter = ""
 local currentTab = "session"
 
--- FauxScrollFrame_* are FrameXML helpers, not part of the documented widget API.
--- They ship on the Classic clients and on retail today, but they are exactly the
--- kind of legacy global a retail-engine client can drop: the HUD context menu
--- broke on Forever because the MouseIsOver GLOBAL was moved to InputUtil in
--- 12.1.0. These run on every list refresh, so a missing one would error
--- continuously rather than once. Degrade to a non-scrolling list (first page
--- only) and say so in the debug log instead.
-local fauxWarned = false
-local function fauxMissing(what)
-  if not fauxWarned then
-    fauxWarned = true
-    GT.Log("%s is unavailable on this client; lists show their first page only", what)
-  end
+-- FauxScrollFrame_* are FrameXML helpers, not part of the documented widget API,
+-- and they are NOT in Blizzard's 12.x UI source: FauxScrollFrame.lua is listed in
+-- none of the manifests on either the `forever` branch or retail 12.1.0, while
+-- HybridScrollFrame.lua IS retained there under "deprecated. Retained only for
+-- addons and legacy content". Expect them (and FauxScrollFrameTemplate) to be
+-- missing on Forever.
+--
+-- These run on every list refresh, so a missing helper would error continuously
+-- rather than once -- the same blast radius as the MouseIsOver global that broke
+-- the HUD context menu on Forever. Rather than lose pagination, the helpers below
+-- fall back to a self-contained equivalent: the offset is tracked on the frame,
+-- the scroll bar is driven directly when the template supplied one, and the mouse
+-- wheel pages the list when it did not. Where the Blizzard helpers exist they are
+-- used untouched, so Classic behaviour is unchanged -- the fallback branches are
+-- only ever taken on a client that lacks them.
+local floor, max = math.floor, math.max
+
+-- CreateFrame with a template name the client does not know errors out, so the
+-- legacy template is tried rather than assumed; a bare ScrollFrame is enough
+-- because fauxWire() below supplies the missing plumbing.
+local function makeScrollFrame(name, parent, template)
+  local ok, frame = pcall(CreateFrame, "ScrollFrame", name, parent, template)
+  if ok and frame then return frame end
+  return CreateFrame("ScrollFrame", name, parent)
 end
+
+-- Rows available to scroll past, and the offset clamped into them.
+local function fauxClamp(frame)
+  local rows = max(0, (frame._gtN or 0) - (frame._gtVis or 0))
+  local off = frame._gtOff or 0
+  if off > rows then off = rows elseif off < 0 then off = 0 end
+  frame._gtOff = off
+  return rows
+end
+
 local function fauxUpdate(frame, n, visible, rowH)
   if type(FauxScrollFrame_Update) == "function" then
     FauxScrollFrame_Update(frame, n, visible, rowH)
-  else
-    fauxMissing("FauxScrollFrame_Update")
+    return
+  end
+  frame._gtN, frame._gtVis, frame._gtRowH = n or 0, visible or 0, rowH or 1
+  local rows = fauxClamp(frame)
+  local bar = frame.ScrollBar
+  if bar then
+    local maxPx = rows * (rowH or 1)
+    bar:SetMinMaxValues(0, maxPx)
+    if (bar:GetValue() or 0) > maxPx then bar:SetValue(maxPx) end
+    if bar.SetShown then bar:SetShown(rows > 0) end
   end
 end
+
 local function fauxOffset(frame)
   if type(FauxScrollFrame_GetOffset) == "function" then
     return FauxScrollFrame_GetOffset(frame) or 0
   end
-  fauxMissing("FauxScrollFrame_GetOffset")
-  return 0
+  return frame._gtOff or 0
 end
-local function fauxVScroll(frame, offset, rowH, updateFn)
+
+local function fauxVScroll(frame, pixels, rowH, updateFn)
   if type(FauxScrollFrame_OnVerticalScroll) == "function" then
-    FauxScrollFrame_OnVerticalScroll(frame, offset, rowH, updateFn)
-  else
-    fauxMissing("FauxScrollFrame_OnVerticalScroll")
-    if type(updateFn) == "function" then updateFn() end
+    FauxScrollFrame_OnVerticalScroll(frame, pixels, rowH, updateFn)
+    return
+  end
+  rowH = rowH or 1
+  local rows = fauxClamp(frame)
+  local off = floor((pixels or 0) / rowH + 0.5)
+  if off < 0 then off = 0 elseif off > rows then off = rows end
+  frame._gtOff = off
+  -- Snap the bar to whole rows. SetValue only fires OnValueChanged when the value
+  -- actually changes, so this cannot recurse.
+  local bar = frame.ScrollBar
+  if bar and (bar:GetValue() or 0) ~= off * rowH then bar:SetValue(off * rowH) end
+  if type(updateFn) == "function" then updateFn() end
+end
+
+-- Supply the plumbing the legacy template would have. Only acts when the Blizzard
+-- helper is absent, so a client that has it keeps the template's own scripts and
+-- its row-highlight handling exactly as shipped.
+-- Say once, and only in the debug log, that the built-in pagination is in use --
+-- a maintainer reading a Forever log should not have to guess why the Blizzard
+-- helpers were never called.
+local fauxNoted = false
+local function fauxNote()
+  if fauxNoted then return end
+  fauxNoted = true
+  GT.Log("FauxScrollFrame helpers absent; using GoldTrack's built-in list pagination")
+end
+
+local function fauxWire(frame, rowH, updateFn)
+  frame._gtOff = 0
+  if type(FauxScrollFrame_OnVerticalScroll) == "function" then return end
+  fauxNote()
+  local bar = frame.ScrollBar
+  if bar then
+    bar:SetScript("OnValueChanged", function(_, value)
+      fauxVScroll(frame, value, rowH, updateFn)
+    end)
+  elseif frame.EnableMouseWheel then
+    -- No template, so no bar: the wheel is the only way to page the list.
+    frame:EnableMouseWheel(true)
+    frame:SetScript("OnMouseWheel", function(_, delta)
+      fauxVScroll(frame, ((frame._gtOff or 0) - (delta or 0)) * rowH, rowH, updateFn)
+    end)
   end
 end
 
@@ -501,12 +570,13 @@ function GT.UI.BuildMain()
     hdr:SetWordWrap(false)
     hdr:SetText("Item")
 
-    p.scroll = CreateFrame("ScrollFrame", "GoldTrackLootScroll", p, "FauxScrollFrameTemplate")
+    p.scroll = makeScrollFrame("GoldTrackLootScroll", p, "FauxScrollFrameTemplate")
     p.scroll:SetPoint("TOPLEFT", 2, -50)
     p.scroll:SetPoint("BOTTOMRIGHT", -28, 4)
     p.scroll:SetScript("OnVerticalScroll", function(self, off)
       fauxVScroll(self, off, 20, GT.UI.UpdateLoot)
     end)
+    fauxWire(p.scroll, 20, GT.UI.UpdateLoot)
 
     for i = 1, LOOT_VISIBLE do
       local r = CreateFrame("Button", nil, p)
@@ -890,7 +960,7 @@ function GT.UI.BuildHistory()
 
   local ARCH_N = 14
   f.ARCH_N = ARCH_N
-  f.list = CreateFrame("ScrollFrame", "GoldTrackArchScroll", f, "FauxScrollFrameTemplate")
+  f.list = makeScrollFrame("GoldTrackArchScroll", f, "FauxScrollFrameTemplate")
   f.list:SetPoint("TOPLEFT", 8, -48)
   f.list:SetPoint("BOTTOMRIGHT", -28, 10)
   f.arch = {}
@@ -929,6 +999,7 @@ function GT.UI.BuildHistory()
   f.list:SetScript("OnVerticalScroll", function(self, off)
     fauxVScroll(self, off, 18, GT.UI.UpdateArchive)
   end)
+  fauxWire(f.list, 18, GT.UI.UpdateArchive)
   f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisable")
   f.empty:SetPoint("CENTER", f.list, "CENTER")
   f.empty:SetText("No archived sessions yet. Reset a session to store one.")

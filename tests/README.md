@@ -9,7 +9,7 @@ python3 -m venv /tmp/gt && /tmp/gt/bin/pip install lupa
 /tmp/gt/bin/python tests/run_tests.py
 ```
 
-Exit code is non-zero if any check fails. 130 checks at the time of writing.
+Exit code is non-zero if any check fails. 148 checks at the time of writing.
 
 ## Why this exists
 
@@ -39,7 +39,7 @@ booted side by side.
 | `load_addon.py` | Parses `GoldTrack.toc` / `GoldTrack_Camelot.toc` and loads the listed files in order. `Core.lua` is invoked as a vararg chunk, as the Blizzard loader does. |
 | `mock_setup.lua` | The mock client. Defines the widget API, fixtures, and **which globals exist**. |
 | `test_forever.py` | Detection, AH ladder, deposit maths, events, professions, price resolution, the ore→bar valuation chain, the SavedVariables mirror, backdrops. |
-| `test_hud_menu.py` | The HUD right-click menu and its per-frame `OnUpdate`; the Loot/History scroll lists, including their degraded path. |
+| `test_hud_menu.py` | The HUD right-click menu and its per-frame `OnUpdate`; the Loot/History scroll lists, including the self-contained pagination fallback. |
 
 ## How the two clients are modelled
 
@@ -73,13 +73,24 @@ Three details worth knowing before editing the mock:
   Blizzard's own UI source (`Gethe/wow-ui-source`) found `FauxScrollFrame.lua` in
   none of the manifests read in full on the `forever` branch or on retail
   12.1.0 — while `HybridScrollFrame.lua` *is* kept there, under the comment
-  *"Retained only for addons and legacy content"*. So Forever's degraded
-  first-page path is exercised as the **normal** path, not as a synthetic
-  failure. That survey is strong negative evidence rather than proof (~250 addons
-  exist; not every manifest was read), so the assumption is a flag:
-  `boot("forever", {"FOREVER_FAUX": "true"})` models the opposite and is asserted
-  in `test_hud_menu.py`. Settle it in game with
-  `/run print(tostring(FauxScrollFrame_Update))`.
+  *"Retained only for addons and legacy content"*. So Forever exercises
+  `UI_Main`'s self-contained pagination fallback as its **normal** path, not as a
+  synthetic failure. The template's `ScrollBar` child carries real value state and
+  fires `OnValueChanged` only when the value actually changes, as the client does,
+  so the fallback's bar-driving is verified rather than stubbed.
+
+  That survey is strong negative evidence rather than proof (~250 addons exist;
+  not every manifest was read), so both assumptions are flags and all three
+  Forever shapes are asserted in `test_hud_menu.py`:
+
+  | `boot(...)` | models | expected |
+  | --- | --- | --- |
+  | `boot("forever")` | helpers gone, template present | fallback drives the bar: offset 5 per 100px, clamps at 26 |
+  | `boot("forever", {"FOREVER_FAUX": "true"})` | helpers do still ship | Blizzard path used, no fallback note |
+  | `boot("forever", {"NO_FAUX_TEMPLATE": "true"})` | template gone too, so `CreateFrame` errors | pcall survives, no bar, mouse wheel pages |
+
+  Settle it in game with
+  `/run print(tostring(FauxScrollFrame_Update), tostring(FauxScrollFrameTemplate))`.
 
 ## Writing a check
 

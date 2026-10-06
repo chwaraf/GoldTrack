@@ -30,10 +30,12 @@ Modelled deliberately, because each one caught (or would have caught) a real bug
     texture-fallback branch from testing.
   * FauxScrollFrame_* exist only in Classic mode, because a survey of Blizzard's
     own manifests found no FauxScrollFrame.lua on either the `forever` or the
-    retail-12.1.0 branch. Forever therefore exercises the degraded list path by
-    default; a test additionally nils the helpers out under Classic to prove the
-    same path is safe on a client that has them. See the definition site for the
-    evidence and for the FOREVER_FAUX override.
+    retail-12.1.0 branch. Forever therefore exercises UI_Main's self-contained
+    pagination fallback as its NORMAL path, and a test additionally nils the
+    helpers out under Classic to prove the same fallback is safe on a client that
+    has them. See the definition site for the evidence and the FOREVER_FAUX
+    override. The FauxScrollFrameTemplate ScrollBar child carries real value
+    state so the fallback's bar-driving is verified, not stubbed.
 ]]
 
 FOREVER = FOREVER or false
@@ -202,6 +204,10 @@ end
 -- manifest was read. Model the opposite with boot("forever", {"FOREVER_FAUX":
 -- "true"}) once checked in game via:  /run print(tostring(FauxScrollFrame_Update))
 FOREVER_FAUX = FOREVER_FAUX or false
+-- Set by boot("forever", {"NO_FAUX_TEMPLATE": "true"}) to model the template
+-- being gone as well as the helper functions. CreateFrame with a template name
+-- the client does not know ERRORS, which is why UI_Main wraps it in pcall.
+NO_FAUX_TEMPLATE = NO_FAUX_TEMPLATE or false
 if not FOREVER or FOREVER_FAUX then
   function FauxScrollFrame_Update(frame, n, visible, rowH)
     FAUX_CALLS = FAUX_CALLS + 1
@@ -321,6 +327,7 @@ local function MakeWidget(kind, name)
   function self:SetScript(ev, fn) self._scripts[ev] = fn end
   function self:GetScript(ev) return self._scripts[ev] end
   function self:HookScript(ev, fn) self._scripts[ev] = fn end
+  function self:EnableMouseWheel(on) self._wheel = on and true or false end
   function self:StartMoving() end
   function self:StopMovingOrSizing() end
   function self:SetScale(...) end
@@ -412,6 +419,31 @@ function CreateFrame(kind, name, parent, template)
     f.GetBackdrop = function(self) return self.backdropInfo end
     f.SetBackdropColor = function(self, ...) self._bdColor = { ... } end
     f.SetBackdropBorderColor = function(self, ...) self._bdBorder = { ... } end
+  end
+  -- FauxScrollFrameTemplate supplies a working vertical ScrollBar child. Give it
+  -- real state instead of the base widget's no-op SetValue/GetValue stubs, so
+  -- UI_Main's self-contained fallback -- which drives the bar directly -- is
+  -- actually exercised. SetValue fires OnValueChanged only when the value
+  -- CHANGES, as the real client does; that is what keeps the fallback's
+  -- bar-snapping from recursing.
+  if type(template) == 'string' and template:find('FauxScrollFrameTemplate') then
+    if NO_FAUX_TEMPLATE then
+      error("Couldn't find template 'FauxScrollFrameTemplate'")
+    end
+    local bar = MakeWidget('Slider', (name or 'anon') .. 'ScrollBar')
+    bar._value, bar._min, bar._max, bar._shown = 0, 0, 0, true
+    function bar:SetMinMaxValues(lo, hi) self._min, self._max = lo, hi end
+    function bar:GetMinMaxValues() return self._min, self._max end
+    function bar:GetValue() return self._value end
+    function bar:SetValue(v)
+      if v == self._value then return end
+      self._value = v
+      local fn = self._scripts['OnValueChanged']
+      if fn then fn(self, v) end
+    end
+    function bar:SetShown(show) self._shown = show and true or false end
+    function bar:IsShown() return self._shown end
+    f.ScrollBar = bar
   end
   if name then _frames[name] = f end
   if parent and parent._kids then parent._kids[#parent._kids + 1] = f end
